@@ -31,11 +31,7 @@ Panel {
 
 
   readonly property bool micActive: state === "listening"
-  readonly property color mascotTextColor: {
-    if (state === "listening") return Color.urgent
-    if (state !== "idle") return Color.accent
-    return Color.muted
-  }
+
 
   // Settings table: one row per setting (label + dropdown + apply)
   readonly property var settingRows: [
@@ -242,86 +238,95 @@ Panel {
       Column {
         id: content
         width: parent.width
-        spacing: Style.space(6)
+        spacing: Style.space(10)
 
-        // ---- Mic hero: big button + state label ----
-        Column {
+        // ---------- Hero: assistant name + state ----------
+        PanelHero {
           width: parent.width
-          spacing: Style.space(4)
-
-          Item {
-            width: parent.width
-            height: Style.space(64)
-
-            Rectangle {
-              id: micCircle
-              anchors.centerIn: parent
-              width: Style.space(64)
-              height: Style.space(64)
-              radius: width / 2
-              color: root.micActive ? Color.urgent : Style.normalFill
-              border.color: root.micActive ? Color.urgent : Color.accent
-              border.width: root.micActive ? 0 : 1
-
-              SequentialAnimation on scale {
-                running: root.micActive
-                loops: Animation.Infinite
-                NumberAnimation { to: 1.12; duration: 400; easing.type: Easing.OutQuad }
-                NumberAnimation { to: 1.0; duration: 400; easing.type: Easing.InQuad }
-              }
+          title: "Assistant"
+          meta: {
+            if (root.state === "thinking") return "working…"
+            if (root.state === "listening") return "listening"
+            if (root.state === "speaking") return "speaking"
+            return "ready"
+          }
+          foreground: root.state === "listening" ? (root.bar ? root.bar.urgent : Color.urgent) : Color.popups.text
+          fontFamily: root.fontFamily
+          iconComponent: Component {
+            Item {
+              width: Style.font.display
+              height: Style.font.display
 
               Text {
                 anchors.centerIn: parent
-                text: root.micActive ? "󰍭" : "󰍬"   // md mic-off / mic
-                color: root.micActive ? Color.background : Color.accent
+                text: {
+                  if (root.state === "thinking") return "⋯"
+                  if (root.state === "speaking") return "\uDB80\uDF6C"   // mic
+                  if (root.state === "listening") return "\uDB80\uDF6D"
+                  return "\u2726"
+                }
+                color: root.state === "listening" ? (root.bar ? root.bar.urgent : Color.urgent) : Color.popups.text
                 font.family: "monospace"
-                font.pixelSize: Style.font.displayLarge
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.toggleMic()
+                font.pixelSize: Style.font.display
               }
             }
-          }
-
-          Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: {
-              if (root.state === "listening") return "listening — tap again to send"
-              if (root.state === "thinking") return "thinking…"
-              if (root.state === "speaking") return "speaking…"
-              return "tap to talk"
-            }
-            color: root.state === "idle" ? Color.muted : root.mascotTextColor
-            font.pixelSize: Style.font.caption
           }
         }
 
-        PanelSeparator { }
-
-        // ---- Live activity ----
-        Column {
+        // ---------- Mic: hero control on tinted card ----------
+        Row {
           width: parent.width
-          spacing: Style.space(4)
-          visible: root.activity !== "" && root.liveActivity !== "off"
+          spacing: Style.space(10)
 
-          PanelSectionHeader {
-            text: "Working on it"
+          Button {
+            id: micButton
+            width: Style.space(44)
+            height: Style.space(44)
+            text: root.micActive ? "󰍭" : "󰍬"
+            fontSize: Style.font.heading
+            tooltipText: root.micActive ? "Stop & send" : "Start voice request"
+            active: root.micActive
+            onClicked: root.toggleMic()
           }
 
-          Text {
-            width: parent.width
-            text: root.activity
-            color: Color.muted
-            font.family: "monospace"
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
+          Column {
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            Text {
+              text: {
+                if (root.state === "listening") return "listening — tap again to send"
+                if (root.state === "thinking") return "working on it…"
+                if (root.state === "speaking") return "speaking…"
+                return "tap to talk"
+              }
+              color: root.state === "listening" ? (root.bar ? root.bar.urgent : Color.urgent) : Color.popups.text
+              font.pixelSize: Style.font.body
+            }
+
+            Text {
+              text: root.state === "thinking" ? (root.activity || "")
+                    : root.state === "idle" ? "or hold SUPER+A and speak"
+                    : ""
+              visible: text !== ""
+              color: Color.muted
+              font.pixelSize: Style.font.caption
+            }
           }
         }
 
-        // ---- Answer ----
+        // ---------- Activity banner ----------
+        Text {
+          width: parent.width
+          visible: root.activity !== "" && root.liveActivity !== "off"
+          text: root.activity
+          color: Color.muted
+          font.family: "monospace"
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideMiddle
+        }
+
+        // ---------- Answer ----------
         Column {
           width: parent.width
           spacing: Style.space(4)
@@ -334,13 +339,13 @@ Panel {
           Text {
             width: parent.width
             text: root.lastAnswer
-            color: root.barForeground
+            color: Color.popups.text
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
           }
         }
 
-        // ---- Recent ----
+        // ---------- Recent ----------
         Column {
           width: parent.width
           spacing: Style.space(3)
@@ -365,50 +370,45 @@ Panel {
           }
         }
 
-        PanelSeparator { }
-
-        // ---- Settings: label left, control right ----
+        // ---------- Settings: rows on a tinted card ----------
         Column {
           width: parent.width
-          spacing: Style.space(6)
+          spacing: Style.space(4)
 
           PanelSectionHeader {
             text: "Settings"
           }
 
-          Column {
-            width: parent.width
-            spacing: Style.space(6)
+          Repeater {
+            model: root.settingRows
 
-            Repeater {
-              model: root.settingRows
+            delegate: Row {
+              required property int index
+              width: parent.width
+              height: Style.space(30)
+              spacing: Style.space(8)
 
-              delegate: Row {
-                required property int index
-                width: parent.width
-                spacing: Style.space(6)
-
-                Text {
-                  width: parent.width * 0.38
+              Text {
+                  width: parent.width * 0.40
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.settingRows[index].label
                   color: Color.muted
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
-                }
+              }
 
-                Dropdown {
-                  width: parent.width * 0.62
+              Dropdown {
+                  width: parent.width * 0.60 - Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
                   options: root.settingRows[index].options
                   value: root.settingRows[index].value
                   onChanged: function(v) { root.settingRows[index].apply(v) }
-                }
               }
             }
           }
         }
 
-        // ---- Stop (only while working) ----
+        // ---------- Stop banner (while working) ----------
         Button {
           width: parent.width
           text: "Stop assistant"
