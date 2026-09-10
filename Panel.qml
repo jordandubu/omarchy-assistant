@@ -37,7 +37,7 @@ Panel {
       var spin = ["(◕ᴗ◕)◔", "(◕ᴗ◕)◐", "(◕ᴗ◕)◑", "(◕ᴗ◕)◒"]
       return spin[frame % 4]
     }
-    if (state === "listening") return (frame % 2 === 0) ? "✧(◉ᴗ◉)" : "(◉ᴗ◉)"
+    if (state === "listening") return (frame % 2 === 0) ? "✧(●ᴗ●)" : "(●ᴗ●)"
     if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕ᴗ◕)"
     // idle: blink every ~8 frames
     return (frame % 8 < 7) ? "(◕ᴗ◕)" : "(◕_◕)"
