@@ -31,6 +31,10 @@ Panel {
 
 
   readonly property bool micActive: state === "listening"
+  // Theme-derived contrast (same pattern as first-party panels: dim from foreground)
+  readonly property color foreground: bar ? bar.barForeground : Color.popups.text
+  readonly property color dim: Qt.darker(foreground, 1.45)
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
 
 
   // Settings table: one row per setting (label + dropdown + apply)
@@ -250,7 +254,7 @@ Panel {
             if (root.state === "speaking") return "speaking"
             return "ready"
           }
-          foreground: root.state === "listening" ? (root.bar ? root.bar.urgent : Color.urgent) : Color.popups.text
+          foreground: root.state === "listening" ? root.urgent : Color.popups.text
           fontFamily: root.fontFamily
           iconComponent: Component {
             Item {
@@ -265,7 +269,7 @@ Panel {
                   if (root.state === "listening") return "\uDB80\uDF6D"
                   return "\u2726"
                 }
-                color: root.state === "listening" ? (root.bar ? root.bar.urgent : Color.urgent) : Color.popups.text
+                color: root.state === "listening" ? root.urgent : Color.popups.text
                 font.family: "monospace"
                 font.pixelSize: Style.font.display
               }
@@ -300,7 +304,7 @@ Panel {
                 if (root.state === "speaking") return "speaking…"
                 return "tap to talk"
               }
-              color: root.state === "listening" ? (root.bar ? root.bar.urgent : Color.urgent) : Color.popups.text
+              color: root.state === "listening" ? root.urgent : Color.popups.text
               font.pixelSize: Style.font.body
             }
 
@@ -309,7 +313,8 @@ Panel {
                     : root.state === "idle" ? "or hold SUPER+A and speak"
                     : ""
               visible: text !== ""
-              color: Color.muted
+              color: root.state === "thinking" ? root.dim : root.foreground
+              opacity: root.state === "thinking" ? 1.0 : 0.75
               font.pixelSize: Style.font.caption
             }
           }
@@ -320,7 +325,7 @@ Panel {
           width: parent.width
           visible: root.activity !== "" && root.liveActivity !== "off"
           text: root.activity
-          color: Color.muted
+          color: root.dim
           font.family: "monospace"
           font.pixelSize: Style.font.caption
           elide: Text.ElideMiddle
@@ -362,7 +367,7 @@ Panel {
               required property int index
               width: parent.width
               text: "· " + (root.historyLines[index] || "")
-              color: Color.muted
+              color: root.dim
               font.family: "monospace"
               font.pixelSize: Style.font.caption
               elide: Text.ElideMiddle
@@ -392,7 +397,7 @@ Panel {
                   width: parent.width * 0.40
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.settingRows[index].label
-                  color: Color.muted
+                  color: root.dim
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
               }
