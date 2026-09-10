@@ -1,0 +1,4 @@
+#!/bin/bash
+tmux kill-session -t jarvis 2>/dev/null
+echo "[stopped by user]" >> "$HOME/Work/jarvis-answers/live.log" 2>/dev/null
+omarchy-notification-send "Jarvis: stopped"

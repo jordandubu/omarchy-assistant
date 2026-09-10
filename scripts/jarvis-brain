@@ -1,0 +1,30 @@
+#!/bin/bash
+# Assistant brain: spawn selected agent CLI in tmux session "jarvis".
+# Brain/persona from ~/.config/omarchy-assistant/settings.json
+set -u
+PROMPT="$1"
+ANS="$HOME/Work/jarvis-answers"
+LIVE="$ANS/live.log"
+DONE="$ANS/answer.txt"
+mkdir -p "$ANS"
+
+S="$HOME/.config/omarchy-assistant/settings.json"
+BRAIN=$(python3 -c "import json;print(json.load(open('$S')).get('brain','omp'))" 2>/dev/null || echo omp)
+PERSONA=$(python3 -c "import json;print(json.load(open('$S')).get('personality','default'))" 2>/dev/null || echo default)
+SP="$HOME/.config/omarchy-assistant/personas/$PERSONA.md"
+[ -f "$SP" ] || SP="$HOME/.config/omarchy-assistant/personas/default.md"
+
+tmux kill-session -t jarvis 2>/dev/null
+tmux new-session -d -s jarvis -x 200 -y 50 \
+  "$HOME/.local/bin/jarvis-worker '$PROMPT' '$SP' '$LIVE' '$DONE' '$BRAIN'; sleep 86400"
+
+# Propagate GUI env into the tmux session so agent-run app launches work
+HYS=$(ls /run/user/$(id -u)/hypr 2>/dev/null | head -1)
+for kv in "XDG_RUNTIME_DIR=/run/user/$(id -u)" "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1}" "DISPLAY=${DISPLAY:-:0}" "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}" "HYPRLAND_INSTANCE_SIGNATURE=$HYS" "HOME=$HOME" "PATH=$PATH"; do
+  KEY="${kv%%=*}"; VAL="${kv#*=}"
+  [ -n "$VAL" ] && tmux set-environment -t jarvis "$KEY" "$VAL"
+done
+
+# Show the user what was heard (their spoken message, verbatim)
+SHORT_P=$(python3 -c "import sys;p=sys.argv[1];print(p if len(p)<=90 else p[:87]+'…')" "$PROMPT")
+omarchy-notification-send -r 424241 -t 10000 "Heard: $SHORT_P" "Working on it — SUPER+I to watch"

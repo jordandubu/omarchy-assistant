@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Jarvis assistant router (F10). Whitelist commands instantly; else brain."""
+import datetime, os, re, subprocess, sys
+
+text = sys.stdin.read().strip()
+if not text:
+    sys.exit(0)
+t = re.sub(r"\s+", " ", text.lower()).strip().rstrip(".,!?")
+t = re.sub(r"^(hey |ok |okay )", "", t)
+
+def launch(*cmd):
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+def notify(msg):
+    subprocess.Popen(["omarchy-notification-send", msg],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def speak(msg):
+    safe = msg.replace('"', "'")
+    subprocess.Popen(["bash", "-c",
+        f'curl -s -m 30 -X POST http://localhost:8765/tts -F "text={safe}" '
+        '-F "voice_url=george" -o /tmp/jarvis-speak.wav && pw-play /tmp/jarvis-speak.wav'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+APPS = {
+    "firefox": "firefox", "chrome": "chromium", "chromium": "chromium",
+    "discord": "discord", "spotify": "spotify", "code": "code",
+    "vs code": "code", "files": "nautilus", "folder": "nautilus",
+    "nautilus": "nautilus", "calculator": "omacalc", "calc": "omacalc",
+    "terminal": "foot", "settings": "omarchy-launch-about",
+}
+
+NUMWORDS = {"one": 1, "two": 2, "three": 3, "five": 5, "ten": 10, "fifteen": 15,
+            "twenty": 20, "thirty": 30, "sixty": 60, "an": 60, "a": 1}
+
+def parse_reminder(t):
+    """Return (minutes, message) or None."""
+    if not t.startswith("remind me"):
+        return None
+    t = t.replace("remind me ", "", 1).strip()
+    unit_re = r"(hours?|hrs?|h|minutes?|mins?|m)"
+    # trailing time: "... check the oven in 10 minutes"
+    m = re.search(r"\bin (\d+|" + "|".join(NUMWORDS) + r") ?(hours?|hrs?|h|minutes?|mins?|m)\b\s*(.*)$", t)
+    if m:
+        n = NUMWORDS.get(m.group(1), m.group(1))
+        mins = int(n) * (60 if m.group(2).startswith(("hour", "hr", "h")) else 1)
+        msg = m.group(3).strip()
+        return mins, msg
+    # leading time: "in 5 minutes to check the oven"
+    m = re.match(r"^in (\d+|" + "|".join(NUMWORDS) + r") ?(hours?|hrs?|h|minutes?|mins?|m)\b\s*(?:to |that )?(.*)$", t)
+    if m:
+        n = NUMWORDS.get(m.group(1))
+        if n is None:
+            n = m.group(1)
+        mins = int(n) * (60 if m.group(2).startswith(("hour", "hr", "h")) else 1)
+        return mins, m.group(3).strip()
+    return None
+
+matched = False
+m = re.match(r"^(?:open|launch|run|start) (.+)$", t)
+if m:
+    target = m.group(1).strip()
+    if target in APPS:
+        launch(APPS[target])
+        notify(f"Opening {target}")
+        matched = True
+elif re.match(r"^volume (up|down|mute|unmute)", t) or t == "mute":
+    if "up" in t: cmd = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"]
+    elif "down" in t: cmd = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
+    else: cmd = ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
+    launch(*cmd)
+    notify("Volume " + ("up" if "up" in t else "down" if "down" in t else "toggled"))
+    matched = True
+elif re.match(r"^record (my |the )?screen( with webcam| and webcam)?", t) or t == "screen recording":
+    if "webcam" in t:
+        launch("omarchy-capture-screenrecording-with-webcam")
+        notify("Screen recording with webcam")
+        speak("Recording screen with webcam.")
+    else:
+        launch("omarchy-capture-screenrecording")
+        notify("Screen recording started")
+        speak("Recording your screen.")
+    matched = True
+elif re.match(r"^(stop|end|finish) (the )?(screen )?recording$", t):
+    launch("pkill", "-INT", "-f", "gpu-screen-recorder")
+    notify("Recording stopped")
+    speak("Recording stopped.")
+    matched = True
+elif t.startswith("screenshot"):
+    launch("omarchy-screenshot")
+    notify("Screenshot")
+    matched = True
+elif re.match(r"^lock( (the|my)? ?(screen|pc|computer)?)?$", t):
+    launch("omarchy-system-lock")
+    matched = True
+elif t.startswith("close") and ("window" in t or "app" in t):
+    launch("hyprctl", "dispatch", "closewindow", "active")
+    matched = True
+elif re.match(r"^what('s| is)?( the)? ?time", t) or t == "time":
+    now = datetime.datetime.now()
+    msg = now.strftime("%H:%M")
+    notify(msg)
+    speak(f"It is {now:%I:%M %p}.")
+    matched = True
+elif re.match(r"^what('s| is)?( the |today'?s? )?date", t) or t == "date" or t.startswith("what day"):
+    now = datetime.datetime.now()
+    msg = now.strftime("%A %d %B %Y")
+    notify(msg)
+    speak(f"Today is {now:%A, %B %d}.")
+    matched = True
+elif re.match(r"^(reboot|restart the computer|restart)$", t):
+    launch("omarchy-system-reboot")
+    matched = True
+elif re.match(r"^(shut ?down|power ?off)$", t):
+    launch("omarchy-system-shutdown")
+    matched = True
+elif parse_reminder(t):
+    mins, msg = parse_reminder(t)
+    if msg:
+        launch("omarchy", "reminder", str(mins), msg)
+        notify(f"Reminder in {mins} min: {msg}")
+        speak(f"Okay, reminding you in {mins} minute{'s' if mins != 1 else ''}.")
+    else:
+        # no message: notify-only reminder
+        launch("omarchy", "reminder", str(mins))
+        notify(f"Reminder in {mins} min")
+        speak(f"Reminder set for {mins} minutes from now.")
+    matched = True
+
+# Whitelisted commands are consumed here; brain handles anything else (detached)
+if not matched:
+    subprocess.Popen([os.path.expanduser("~/.local/bin/jarvis-brain"), text],
+                     start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+sys.exit(0)

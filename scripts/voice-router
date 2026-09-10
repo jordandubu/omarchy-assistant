@@ -1,0 +1,5 @@
+#!/bin/bash
+# Pure passthrough: dictation profile only. Assistant speech goes via the
+# voxtype "assistant" profile to jarvis-router.
+read -r text
+printf '%s' "$text"

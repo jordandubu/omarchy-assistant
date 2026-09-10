@@ -1,0 +1,230 @@
+#!/bin/bash
+# Runs inside tmux session "jarvis": live activity on the pane + live.log, delivery after.
+# Args: PROMPT SYSTEM_PROMPT_PATH LIVE_PATH DONE_PATH [BRAIN]
+set -u
+PROMPT="$1"; SP="$2"; LIVE="$3"; DONE="$4"; BRAIN="${5:-omp}"
+: > "$LIVE"
+
+S="$HOME/.config/omarchy-assistant/settings.json"
+TTS_BACKEND=$(python3 -c "import json;print(json.load(open('$S'))['tts']['backend'])" 2>/dev/null || echo kyutai)
+TTS_VOICE=$(python3 -c "import json;print(json.load(open('$S'))['tts']['voice'])" 2>/dev/null || echo george)
+
+python3 - "$PROMPT" "$SP" "$LIVE" "$DONE" "$BRAIN" <<'PYEOF'
+import datetime, json, subprocess, sys
+
+prompt, sp_path, live_path, done_path, brain = sys.argv[1:6]
+sp = open(sp_path).read()
+
+def log(msg):
+    print(msg, flush=True)            # pane (stdout = tmux pty)
+    with open(live_path, "a") as f:
+        f.write(msg + "\n")
+
+log(f"[{datetime.datetime.now():%H:%M:%S}] prompt: {prompt}")
+log(f"  brain: {brain} · ctrl-c stop · ctrl-b d detach")
+final = ""
+n = 0
+
+def note_tool(name, detail=""):
+    global n
+    n += 1
+    log(f"[{datetime.datetime.now():%H:%M:%S}] #{n} {name}: {detail}")
+
+if brain == "omp":
+    import pathlib, time as _time
+    sess_dir = pathlib.Path.home() / ".local/share/jarvis-session"
+    stamp = sess_dir / "last-use"
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    reset = stamp.exists() and (_time.time() - stamp.stat().st_mtime > 300)
+    if reset:
+        for f in sess_dir.glob("*.jsonl"):
+            f.unlink()
+    cmd = ["omp", "-p", prompt]
+    if not reset:
+        cmd += ["-c"]
+    cmd += ["--no-pty", "--thinking", "off", "--session-dir", str(sess_dir),
+            "--approval-mode", "yolo", "--append-system-prompt", sp, "--mode", "json"]
+    stamp.touch()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    tool_names = {"bash": "run", "read": "read", "write": "write", "edit": "edit",
+                  "glob": "find", "grep": "search", "web_search": "web-search",
+                  "browser": "browse", "browser_tab": "browse", "fetch": "fetch"}
+    for line in proc.stdout:
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        t = ev.get("type")
+        if t == "tool_execution_start":
+            args = ev.get("args") or {}
+            detail = args.get("command") or args.get("query") or args.get("pattern") \
+                     or args.get("path") or args.get("url") or ""
+            note_tool(tool_names.get(ev.get("toolName", ""), ev.get("toolName", "")), detail)
+        elif t == "tool_execution_end":
+            res = ev.get("result") or {}
+            out = ""
+            for c in (res.get("content") or []):
+                if isinstance(c, dict) and c.get("type") == "text":
+                    out = c.get("text", ""); break
+            out = " ".join(out.split())
+            if len(out) > 200: out = out[:200] + "…"
+            if out:
+                log(f"    → {out}")
+        elif t == "message_end" and ev.get("message", {}).get("role") == "assistant":
+            for c in ev["message"].get("content", []):
+                if c.get("type") == "text" and ev["message"].get("stopReason") != "toolUse":
+                    final = c.get("text", "")
+    proc.wait()
+
+elif brain == "claude":
+    cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
+           "--dangerously-skip-permissions", "--append-system-prompt", sp]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        t = ev.get("type")
+        if t == "assistant":
+            msg = ev.get("message") or {}
+            for c in msg.get("content") or []:
+                if c.get("type") == "tool_use":
+                    note_tool(c.get("name", "tool"),
+                              json.dumps(c.get("input", {}))[:120])
+                elif c.get("type") == "text" and c.get("text", "").strip():
+                    final = c["text"]
+                    log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {final[:200]}")
+        elif t == "user":  # tool results
+            msg = ev.get("message") or {}
+            for c in msg.get("content") or []:
+                if isinstance(c, dict) and c.get("type") == "tool_result":
+                    out = ""
+                    cc = c.get("content")
+                    if isinstance(cc, list):
+                        for x in cc:
+                            if isinstance(x, dict) and x.get("type") == "text":
+                                out = x.get("text", ""); break
+                    elif isinstance(cc, str):
+                        out = cc
+                    out = " ".join(out.split())
+                    if len(out) > 200: out = out[:200] + "…"
+                    if out:
+                        log(f"    → {out}")
+    proc.wait()
+
+elif brain == "codex":
+    cmd = ["codex", "exec", "--json", "--sandbox", "danger-full-access",
+           "-c", 'model_instructions_file="%s"' % sp_path, prompt]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        t = ev.get("type") or ev.get("msg", {}).get("type", "")
+        m = ev.get("msg", ev)
+        if t in ("exec_command_begin",) or (isinstance(m, dict) and m.get("type") == "exec_command_begin"):
+            note_tool("run", str(m.get("command", ""))[:120])
+        elif t in ("agent_message",) or (isinstance(m, dict) and m.get("type") == "agent_message"):
+            final = m.get("message", "")
+            log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {final[:200]}")
+    proc.wait()
+
+elif brain == "gemini":
+    cmd = ["gemini", "-p", prompt, "--yolo"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    out_lines = []
+    for line in proc.stdout:
+        line = line.rstrip()
+        if line:
+            out_lines.append(line)
+            log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {line[:200]}")
+    proc.wait()
+    final = "\n".join(out_lines).strip()
+
+elif brain == "cursor-agent":
+    cmd = ["cursor-agent", "-p", prompt, "--output-format", "stream-json", "--force"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        t = ev.get("type")
+        if t == "assistant":
+            msg = ev.get("message") or {}
+            for c in msg.get("content") or []:
+                if c.get("type") == "tool_use":
+                    note_tool(c.get("name", "tool"), json.dumps(c.get("input", {}))[:120])
+                elif c.get("type") == "text" and c.get("text", "").strip():
+                    final = c["text"]
+                    log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {final[:200]}")
+        elif t == "user":
+            msg = ev.get("message") or {}
+            for c in msg.get("content") or []:
+                if isinstance(c, dict) and c.get("type") == "tool_result":
+                    out = ""
+                    cc = c.get("content")
+                    if isinstance(cc, list):
+                        for x in cc:
+                            if isinstance(x, dict) and x.get("type") == "text":
+                                out = x.get("text", ""); break
+                    elif isinstance(cc, str):
+                        out = cc
+                    out = " ".join(out.split())
+                    if len(out) > 200: out = out[:200] + "…"
+                    if out:
+                        log(f"    → {out}")
+    proc.wait()
+
+elif brain == "crush":
+    cmd = ["crush", "run", prompt]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    out_lines = []
+    for line in proc.stdout:
+        line = line.rstrip()
+        if line:
+            out_lines.append(line)
+    proc.wait()
+    final = "\n".join(out_lines).strip()
+    log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {final[:200]}")
+
+elif brain == "opencode":
+    cmd = ["opencode", "run", prompt]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    out_lines = []
+    for line in proc.stdout:
+        line = line.rstrip()
+        if line:
+            out_lines.append(line)
+    proc.wait()
+    final = "\n".join(out_lines).strip()
+    log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {final[:200]}")
+
+else:
+    final = "Unknown brain: " + brain
+    log(final)
+
+if final:
+    open(done_path, "w").write(final)
+    print("\n" + final)
+PYEOF
+
+ANSWER="$(cat "$DONE" 2>/dev/null)"
+[ -n "$ANSWER" ] || { echo "[stopped by user]"; echo "[stopped by user]" >> "$LIVE"; exit 0; }
+printf '%s\n' "$ANSWER" >> "$LIVE"
+printf '%s' "$ANSWER" | tr -d '\n' | wl-copy 2>/dev/null
+LOG="$(dirname "$LIVE")/$(date +%s).log"
+{ echo "PROMPT: $PROMPT"; echo "---"; cat "$LIVE"; } > "$LOG"
+SHORT="$(printf '%s' "$ANSWER" | head -c 300)"
+omarchy-notification-send -r 424242 -t 8000 "Assistant" "$SHORT" 2>/dev/null
+# Speak via Kyutai Pocket TTS daemon; piper fallback (backend from settings)
+if [ "$TTS_BACKEND" = "kyutai" ] && curl -s -m 30 -X POST http://localhost:8765/tts \
+     -F "text=$ANSWER" -F "voice_url=$TTS_VOICE" -o /tmp/jarvis-reply.wav; then
+  pw-play /tmp/jarvis-reply.wav 2>/dev/null
+else
+  VOICE="$HOME/.local/share/jarvis-tts/voices/en_GB-alan-medium.onnx"
+  PIPER="$HOME/.local/share/jarvis-tts/bin/piper"
+  [ -x "$PIPER" ] && printf '%s' "$ANSWER" | "$PIPER" -m "$VOICE" -f /tmp/jarvis-reply.wav 2>/dev/null && pw-play /tmp/jarvis-reply.wav 2>/dev/null
+fi

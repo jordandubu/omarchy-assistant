@@ -1,0 +1,13 @@
+[Unit]
+Description=Kyutai Pocket TTS server for Omarchy Assistant
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/assistant-tts-pocket/bin/pocket-tts serve --port 8765
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

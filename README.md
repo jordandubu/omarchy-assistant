@@ -22,10 +22,22 @@ replace the pipeline.
 
 ## Install
 
-    omarchy plugin add ~/Documents/repo/omarchy-assistant --enable
+    git clone https://github.com/<you>/omarchy-assistant
+    cd omarchy-assistant
+    ./scripts/install.sh          # pipeline scripts + voxtype profile + settings
+    omarchy plugin add "$PWD" --enable
 
-Or for development, symlink/copy into `~/.config/omarchy/plugins/` and run
-`omarchy-shell shell rescanPlugins`.
+Optional spoken replies (Kyutai Pocket TTS, ~1 GB local model):
+
+    ./scripts/install.sh --with-tts
+
+Then add the push-to-talk keys to `~/.config/hypr/bindings.lua`:
+
+    o.bind("SUPER + A", "Start assistant (push-to-talk)", "voxtype record start --profile assistant")
+    o.bind("SUPER + A", "Stop assistant (push-to-talk)", "voxtype record stop", { release = true })
+
+and reload the shell. Requires: voxtype (STT), tmux, an agent CLI for the brain
+(omp by default), `omarchy-notification-send` (omarchy built-in).
 
 ## License
 
