@@ -22,7 +22,7 @@ replace the pipeline.
 
 ## Install
 
-    git clone https://github.com/<you>/omarchy-assistant
+    git clone https://github.com/jordandubu/omarchy-assistant
     cd omarchy-assistant
     ./scripts/install.sh          # pipeline scripts + voxtype profile + settings
     omarchy plugin add "$PWD" --enable
