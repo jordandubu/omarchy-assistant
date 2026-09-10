@@ -57,8 +57,10 @@ BarWidget {
     }
     if (state === "listening") return (frame % 2 === 0) ? "✧(◉‿◉)" : "(◉‿◉)"
     if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕‿◕)"
-    // idle: blink every ~10 frames
-    return (frame % 10 < 9) ? "(◕‿◕)" : "(◕_◕)"
+    // idle: blink + dart eyes between glances
+    var glances = ["(◕‿◕)", "(◕‿◕)", "(◕◕‿)", "(◕‿◕)", "(◕‿◕)", "(◕‿◕)", "(◕‿◕)", "(◕‿◕)"]
+    if (frame % 10 === 9) return "(◕_◕)"          // blink
+    return glances[frame % glances.length]
   }
 
   readonly property color faceColor: {

@@ -224,84 +224,41 @@ Panel {
           width: parent.width
           height: mascotEyeFace.height + statusText.height + Style.space(4)
 
-          // Global cursor -> head-local look vector
-          property real globalX: 0
-          property real globalY: 0
-          property real headScreenX: 0
-          property real headScreenY: 0
-
-          // Eye geometry
+          // Eyes dart randomly around (no cursor tracking; cuter idle behavior)
+          property point look: Qt.point(0, 0)
           readonly property real eyeSize: Style.space(14)
           readonly property real pupilSize: Style.space(6)
           readonly property real lookRange: eyeSize / 4.0
 
-          readonly property point look: {
-            var dx = headScreenX - globalX
-            var dy = headScreenY - globalY
-            var len = Math.max(1, Math.sqrt(dx * dx + dy * dy))
-            var clamped = Math.min(1, len / 400)
-            return Qt.point(dx / len * lookRange * clamped, dy / len * lookRange * clamped)
-          }
-
-          // Cursor polling
+          // Dart timer: eyes jump to a random spot, hold, jump again (idle/listening)
           Timer {
-            interval: 120
-            running: true
+            running: root.state === "idle" || root.state === "listening"
             repeat: true
-            triggeredOnStart: true
-            onTriggered: cursorProcess.running = true
-          }
-
-          Process {
-            id: cursorProcess
-            running: false
-            stdout: StdioCollector {
-              waitForEnd: true
-              onStreamFinished: {
-                mascot.updateHeadPos()   // window may have moved since last tick
-                var parts = String(text || "").trim().split(",")
-                if (parts.length === 2) {
-                  mascot.globalX = Number(parts[0]) || 0
-                  mascot.globalY = Number(parts[1]) || 0
-                }
-              }
+            interval: 1800 + Math.random() * 1600
+            onTriggered: {
+              var a = Math.random() * Math.PI * 2
+              var r = Math.random() * mascot.lookRange
+              mascot.look = Qt.point(Math.cos(a) * r, Math.sin(a) * r * 0.6)
             }
           }
 
-          // Head screen position: map into the panel window, add window screen offset
-          function updateHeadPos() {
-            var win = mascotEyeFace.QsWindow ? mascotEyeFace.QsWindow.window : null
-            if (!win) return
-            var local = mascotEyeFace.mapToItem(win.contentItem, mascotEyeFace.width / 2, mascotEyeFace.height / 2)
-            var sx = win.screen ? win.screen.x : 0
-            var sy = win.screen ? win.screen.y : 0
-            headScreenX = sx + (win.x || 0) + local.x
-            headScreenY = sy + (win.y || 0) + local.y
+          // Micro-jitter while busy (thinking/speaking)
+          Timer {
+            running: root.state === "thinking" || root.state === "speaking"
+            repeat: true
+            interval: 320
+            onTriggered: {
+              mascot.look = Qt.point((Math.random() - 0.5) * mascot.lookRange,
+                                     (Math.random() - 0.5) * mascot.lookRange * 0.6)
+            }
           }
 
-          Component.onCompleted: {
-            cursorProcess.command = ["hyprctl", "cursorpos"]
-            mascot.updateHeadPos()
-          }
-
-          // Idle glow ring
-          Rectangle {
-            anchors.centerIn: mascotEyeFace
-            width: mascotEyeFace.width + Style.space(24)
-            height: mascotEyeFace.height + Style.space(10)
-            radius: height / 2
-            color: "transparent"
-            border.color: root.mascotColor
-            border.width: 1
-            opacity: root.state === "idle" ? 0.25 : 0.6
-            Behavior on opacity { NumberAnimation { duration: 300 } }
-          }
+          // Ease look back to center when timers stop (reset on state change)
+          onStateChanged: mascot.look = Qt.point(0, 0)
 
           // Mascot head
           Item {
             id: mascotEyeFace
-            onXChanged: mascot.updateHeadPos()
-            onYChanged: mascot.updateHeadPos()
             anchors.horizontalCenter: parent.horizontalCenter
             y: 0
             width: eyeL.width + Style.space(6) + eyeR.width + Style.space(12)
