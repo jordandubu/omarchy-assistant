@@ -218,7 +218,58 @@ Panel {
         width: parent.width
         spacing: Style.space(8)
 
-        // ---- Hero: mascot with eyes that track the mouse ----
+
+        // ---- Big mic button ----
+        Item {
+          width: parent.width
+          height: micButtonSize
+
+          readonly property real micButtonSize: Style.space(44)
+
+          Rectangle {
+            id: micCircle
+            anchors.centerIn: parent
+            width: parent.height
+            height: parent.height
+            radius: width / 2
+            color: root.micActive ? Color.urgent : Style.normalFill
+            border.color: root.micActive ? Color.urgent : Color.accent
+            border.width: root.micActive ? 0 : 1
+
+            SequentialAnimation on scale {
+              running: root.micActive
+              loops: Animation.Infinite
+              NumberAnimation { to: 1.12; duration: 400; easing.type: Easing.OutQuad }
+              NumberAnimation { to: 1.0; duration: 400; easing.type: Easing.InQuad }
+            }
+
+            Text {
+              anchors.centerIn: parent
+              // Nerd Font microphone glyphs (same as shell Microphone widget)
+              text: root.micActive ? "󰍭" : "󰍬"
+              color: root.micActive ? Color.background : Color.accent
+              font.family: "monospace"
+              font.pixelSize: Style.font.display
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.toggleMic()
+            }
+          }
+
+          // caption under circle
+          Text {
+            anchors.top: micCircle.bottom
+            anchors.topMargin: -Style.space(2)
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: false
+            text: ""
+          }
+        }
+
+        // ---- Mascot under the mic ----
         Item {
           id: mascot
           width: parent.width
@@ -357,56 +408,6 @@ Panel {
             }
             color: Color.muted
             font.pixelSize: Style.font.caption
-          }
-        }
-
-        // ---- Big mic button ----
-        Item {
-          width: parent.width
-          height: micButtonSize
-
-          readonly property real micButtonSize: Style.space(44)
-
-          Rectangle {
-            id: micCircle
-            anchors.centerIn: parent
-            width: parent.height
-            height: parent.height
-            radius: width / 2
-            color: root.micActive ? Color.urgent : Style.normalFill
-            border.color: root.micActive ? Color.urgent : Color.accent
-            border.width: root.micActive ? 0 : 1
-
-            SequentialAnimation on scale {
-              running: root.micActive
-              loops: Animation.Infinite
-              NumberAnimation { to: 1.12; duration: 400; easing.type: Easing.OutQuad }
-              NumberAnimation { to: 1.0; duration: 400; easing.type: Easing.InQuad }
-            }
-
-            Text {
-              anchors.centerIn: parent
-              // Nerd Font microphone glyphs (same as shell Microphone widget)
-              text: root.micActive ? "󰍭" : "󰍬"
-              color: root.micActive ? Color.background : Color.accent
-              font.family: "monospace"
-              font.pixelSize: Style.font.display
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.toggleMic()
-            }
-          }
-
-          // caption under circle
-          Text {
-            anchors.top: micCircle.bottom
-            anchors.topMargin: -Style.space(2)
-            anchors.horizontalCenter: parent.horizontalCenter
-            visible: false
-            text: ""
           }
         }
 
