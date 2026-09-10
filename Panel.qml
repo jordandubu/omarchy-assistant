@@ -18,11 +18,21 @@ Panel {
 
   property string lastAnswer: ""
   property var historyLines: []
-  property int reloadTick: 0
+
+  // Settings (loaded via scripts/settings.sh)
+  property string brain: "omp"
+  property string personality: "default"
+  property string sttEngine: "parakeet"
+  property string ttsVoice: "george"
+  property var personaOptions: ["default"]
+  property var voiceOptions: ["george"]
 
   function reload() {
     answerFile.reload()
     historyProcess.running = true
+    settingsGetProcess.running = true
+    personasProcess.running = true
+    voicesProcess.running = true
   }
 
   function switchPanel(direction) {
@@ -74,7 +84,72 @@ Panel {
     }
   }
 
+
+
+  // Settings IO
+  Process {
+    id: settingsGetProcess
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        // one line: brain|personality|stt|voice
+        var p = String(text || "").trim().split("|")
+        if (p.length >= 4) {
+          root.brain = p[0]
+          root.personality = p[1]
+          root.sttEngine = p[2]
+          root.ttsVoice = p[3]
+        }
+      }
+    }
+  }
+
+  Process {
+    id: personasProcess
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var opts = []
+        var parts = String(text || "").split("\n")
+        for (var i = 0; i < parts.length; i++)
+          if (parts[i].trim() !== "") opts.push(parts[i].trim())
+        root.personaOptions = opts.length > 0 ? opts : ["default"]
+      }
+    }
+  }
+
+  Process {
+    id: voicesProcess
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var opts = []
+        var parts = String(text || "").split("\n")
+        for (var i = 0; i < parts.length; i++)
+          if (parts[i].trim() !== "") opts.push(parts[i].trim())
+        root.voiceOptions = opts.length > 0 ? opts : ["george"]
+      }
+    }
+  }
+
+  Process {
+    id: settingsSetProcess
+    running: false
+  }
+
+  function setSetting(key, value) {
+    settingsSetProcess.command = [
+      Quickshell.env("HOME") + "/Documents/repo/omarchy-assistant/scripts/settings.sh",
+      "set", key, value
+    ]
+    settingsSetProcess.running = true
+  }
+
   Component.onCompleted: {
+    var sh = Quickshell.env("HOME") + "/Documents/repo/omarchy-assistant/scripts"
     historyProcess.command = [
       "bash", "-c",
       "for f in $(ls -t ~/Work/jarvis-answers/*.log 2>/dev/null | head -20); do " +
@@ -82,8 +157,12 @@ Panel {
       "  tail -1 \"$f\" | cut -c1-100; " +
       "done"
     ]
+    settingsGetProcess.command = ["bash", "-c",
+      "sh=" + sh + "/settings.sh; " +
+      "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)\""]
+    personasProcess.command = ["bash", "-c", sh + "/settings.sh personas"]
+    voicesProcess.command = ["bash", "-c", sh + "/settings.sh voices"]
   }
-
   Process {
     id: brainProcess
     running: false
@@ -173,7 +252,7 @@ Panel {
         Text {
           width: parent.width
           visible: root.lastAnswer === ""
-          text: "Ask something — type below or hold F10 and speak."
+          text: "Ask something — type below or hold SUPER+A and speak."
           color: Color.muted
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
@@ -224,6 +303,57 @@ Panel {
         }
 
         // Footer actions
+
+        // Settings
+        Column {
+          width: parent.width
+          spacing: Style.space(8)
+
+          PanelSectionHeader {
+            text: "Settings"
+          }
+
+          Dropdown {
+            width: parent.width
+            label: "Brain"
+            options: ["omp", "opencode", "claude", "codex", "gemini"]
+            value: root.brain
+            onChanged: function(v) { root.setSetting("brain", v) }
+          }
+
+          Dropdown {
+            width: parent.width
+            label: "Personality"
+            options: root.personaOptions
+            value: root.personality
+            onChanged: function(v) { root.setSetting("personality", v) }
+          }
+
+          Dropdown {
+            width: parent.width
+            label: "Speech to text"
+            options: ["parakeet", "whisper-tiny", "whisper-small", "whisper-medium", "whisper-large-v3-turbo"]
+            value: root.sttEngine
+            onChanged: function(v) { root.setSetting("stt_engine", v) }
+          }
+
+          Dropdown {
+            width: parent.width
+            label: "Voice"
+            options: root.voiceOptions
+            value: root.ttsVoice
+            onChanged: function(v) {
+              if (v === "piper (alan)") {
+                root.setSetting("tts.backend", "piper")
+              } else {
+                root.setSetting("tts.backend", "kyutai")
+                root.setSetting("tts.voice", v)
+              }
+            }
+          }
+        }
+
+        PanelSeparator { }
         Row {
           width: parent.width
           spacing: Style.space(6)
@@ -231,7 +361,7 @@ Panel {
           Button {
             text: "Stop"
             visible: root.state === "thinking"
-            onClicked: root.close()
+            onClicked: root.stop()
           }
 
           Button {
