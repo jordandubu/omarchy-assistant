@@ -23,10 +23,34 @@ Panel {
   property string brain: "omp"
   property string personality: "default"
   property string sttEngine: "parakeet"
-  property string liveActivity: "on"
   property string ttsVoice: "george"
+  property string liveActivity: "on"
   property var personaOptions: ["default"]
   property var voiceOptions: ["george"]
+
+  // Mascot animation
+  property int frame: 0
+
+  // Kaomoji mascot faces per state (robot style, animated)
+  readonly property string mascotFace: {
+    if (state === "thinking") {
+      var spin = ["(◕‿◕)◔", "(◕‿◕)◐", "(◕‿◕)◑", "(◕‿◕)◒"]
+      return spin[frame % 4]
+    }
+    if (state === "listening") return (frame % 2 === 0) ? "✧(◉‿◉)" : "(◉‿◉)"
+    if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕‿◕)"
+    // idle: blink every ~8 frames
+    return (frame % 8 < 7) ? "(◕‿◕)" : "(◕_◕)"
+  }
+
+  readonly property color mascotColor: {
+    if (state === "thinking") return Color.accent
+    if (state === "listening") return Color.urgent
+    if (state === "speaking") return Color.accent
+    return Color.foreground
+  }
+
+  readonly property bool micActive: state === "listening"
 
   function reload() {
     answerFile.reload()
@@ -75,8 +99,6 @@ Panel {
       }
     }
   }
-
-
 
   // Settings IO
   Process {
@@ -141,6 +163,23 @@ Panel {
     settingsSetProcess.running = true
   }
 
+  Process {
+    id: stopProcess
+    running: false
+    command: [Quickshell.env("HOME") + "/.local/bin/jarvis-stop"]
+  }
+
+  Process {
+    id: micProcess
+    running: false
+  }
+
+  function toggleMic() {
+    var verb = root.micActive ? "stop" : "start"
+    micProcess.command = ["voxtype", "record", verb, "--profile", "assistant"]
+    micProcess.running = true
+  }
+
   Component.onCompleted: {
     var sh = Quickshell.env("HOME") + "/Documents/repo/omarchy-assistant/scripts"
     historyProcess.command = [
@@ -156,22 +195,6 @@ Panel {
     personasProcess.command = ["bash", "-c", sh + "/settings.sh personas"]
     voicesProcess.command = ["bash", "-c", sh + "/settings.sh voices"]
   }
-  Process {
-    id: brainProcess
-    running: false
-  }
-
-  Process {
-    id: micProcess
-    running: false
-    command: ["voxtype", "record", "start", "--profile", "assistant"]
-  }
-
-  Process {
-    id: stopProcess
-    running: false
-    command: [Quickshell.env("HOME") + "/.local/bin/jarvis-stop"]
-  }
 
   // ------------------------------------------------------------- UI
   KeyboardPanel {
@@ -181,7 +204,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(320))
+    contentWidth: panel.fittedContentWidth(Style.space(340))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
@@ -193,73 +216,280 @@ Panel {
       Column {
         id: content
         width: parent.width
-        spacing: Style.space(10)
+        spacing: Style.space(8)
 
-        // Header: big mascot + state label
-        Row {
+        // ---- Hero: mascot with eyes that track the mouse ----
+        Item {
+          id: mascot
           width: parent.width
-          spacing: Style.space(10)
+          height: mascotEyeFace.height + statusText.height + Style.space(4)
 
-          Text {
-            text: root.state === "thinking" ? "[-.-]" : (root.state === "listening" ? "[=.o]" : "[^.]")
-            color: root.barForeground
-            font.family: "monospace"
-            font.pixelSize: Style.font.display
+          // Global cursor -> head-local look vector
+          property real globalX: 0
+          property real globalY: 0
+          property real headScreenX: 0
+          property real headScreenY: 0
+
+          // Eye geometry
+          readonly property real eyeSize: Style.space(14)
+          readonly property real pupilSize: Style.space(6)
+          readonly property real lookRange: eyeSize / 4.0
+
+          readonly property point look: {
+            var dx = headScreenX - globalX
+            var dy = headScreenY - globalY
+            var len = Math.max(1, Math.sqrt(dx * dx + dy * dy))
+            var clamped = Math.min(1, len / 400)
+            return Qt.point(dx / len * lookRange * clamped, dy / len * lookRange * clamped)
           }
 
-          Column {
-            anchors.verticalCenter: parent.verticalCenter
+          // Cursor polling
+          Timer {
+            interval: 120
+            running: true
+            repeat: true
+            triggeredOnStart: true
+            onTriggered: cursorProcess.running = true
+          }
 
+          Process {
+            id: cursorProcess
+            running: false
+            stdout: StdioCollector {
+              waitForEnd: true
+              onStreamFinished: {
+                var parts = String(text || "").trim().split(",")
+                if (parts.length === 2) {
+                  mascot.globalX = Number(parts[0]) || 0
+                  mascot.globalY = Number(parts[1]) || 0
+                }
+              }
+            }
+          }
+
+          // Head screen position: map into the panel window, add window screen offset
+          function updateHeadPos() {
+            var win = mascotEyeFace.QsWindow ? mascotEyeFace.QsWindow.window : null
+            if (!win) return
+            var local = mascotEyeFace.mapToItem(win.contentItem, mascotEyeFace.width / 2, mascotEyeFace.height / 2)
+            var sx = win.screen ? win.screen.x : 0
+            var sy = win.screen ? win.screen.y : 0
+            headScreenX = sx + (win.x || 0) + local.x
+            headScreenY = sy + (win.y || 0) + local.y
+          }
+
+          Component.onCompleted: {
+            cursorProcess.command = ["hyprctl", "cursorpos"]
+            mascot.updateHeadPos()
+          }
+
+          // Idle glow ring
+          Rectangle {
+            anchors.centerIn: mascotEyeFace
+            width: mascotEyeFace.width + Style.space(24)
+            height: mascotEyeFace.height + Style.space(10)
+            radius: height / 2
+            color: "transparent"
+            border.color: root.mascotColor
+            border.width: 1
+            opacity: root.state === "idle" ? 0.25 : 0.6
+            Behavior on opacity { NumberAnimation { duration: 300 } }
+          }
+
+          // Mascot head
+          Item {
+            id: mascotEyeFace
+            onXChanged: mascot.updateHeadPos()
+            onYChanged: mascot.updateHeadPos()
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 0
+            width: eyeL.width + Style.space(6) + eyeR.width + Style.space(12)
+            height: Math.max(eyeL.height, mouthText.height)
+
+            // Left eye
+            Rectangle {
+              id: eyeL
+              x: 0
+              anchors.verticalCenter: parent.verticalCenter
+              width: mascot.eyeSize
+              height: mascot.eyeSize * 1.35
+              radius: width / 2
+              color: root.mascotColor
+
+              Rectangle {
+                anchors.centerIn: parent
+                width: mascot.pupilSize
+                height: mascot.pupilSize
+                radius: width / 2
+                color: Color.background
+                x: parent.width / 2 - width / 2 + mascot.look.x
+                y: parent.height / 2 - height / 2 + mascot.look.y
+              }
+            }
+
+            // Mouth
             Text {
-              text: "AI Assistant"
-              color: root.barForeground
-              font.pixelSize: Style.font.subtitle
+              id: mouthText
+              anchors.verticalCenter: parent.verticalCenter
+              x: eyeL.width + Style.space(4)
+              text: {
+                if (root.state === "speaking") return (root.frame % 2 === 0) ? "o" : "‿"
+                if (root.state === "listening") return "◡"
+                if (root.state === "thinking") return "…"
+                return "‿"
+              }
+              color: root.mascotColor
+              font.family: "monospace"
+              font.pixelSize: Style.font.heading
               font.bold: true
             }
 
-            Text {
-              text: root.state === "idle" ? "ready" : root.state
-              color: Color.muted
-              font.pixelSize: Style.font.caption
+            // Right eye
+            Rectangle {
+              id: eyeR
+              x: eyeL.width + Style.space(6) + mouthText.width + Style.space(2)
+              anchors.verticalCenter: parent.verticalCenter
+              width: mascot.eyeSize
+              height: mascot.eyeSize * 1.35
+              radius: width / 2
+              color: root.mascotColor
+
+              Rectangle {
+                anchors.centerIn: parent
+                width: mascot.pupilSize
+                height: mascot.pupilSize
+                radius: width / 2
+                color: Color.background
+                x: parent.width / 2 - width / 2 + mascot.look.x
+                y: parent.height / 2 - height / 2 + mascot.look.y
+              }
             }
+
+            // Breathe/pulse while busy
+            SequentialAnimation on opacity {
+              running: root.state !== "idle"
+              loops: Animation.Infinite
+              NumberAnimation { to: 0.55; duration: 500 }
+              NumberAnimation { to: 1.0; duration: 500 }
+            }
+          }
+
+          Text {
+            id: statusText
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            text: {
+              if (root.state === "thinking") return "thinking…"
+              if (root.state === "listening") return "listening — tap mic to send"
+              if (root.state === "speaking") return "speaking"
+              return "ready"
+            }
+            color: Color.muted
+            font.pixelSize: Style.font.caption
           }
         }
 
-        // Activity line while thinking (controlled by Live activity setting)
-        Text {
+        // ---- Big mic button ----
+        Item {
           width: parent.width
-          visible: root.activity !== "" && root.liveActivity !== "off"
-          text: root.activity
-          color: Color.muted
-          font.family: "monospace"
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+          height: micButtonSize
+
+          readonly property real micButtonSize: Style.space(44)
+
+          Rectangle {
+            id: micCircle
+            anchors.centerIn: parent
+            width: parent.height
+            height: parent.height
+            radius: width / 2
+            color: root.micActive ? Color.urgent : Style.normalFill
+            border.color: root.micActive ? Color.urgent : Color.accent
+            border.width: root.micActive ? 0 : 1
+
+            SequentialAnimation on scale {
+              running: root.micActive
+              loops: Animation.Infinite
+              NumberAnimation { to: 1.12; duration: 400; easing.type: Easing.OutQuad }
+              NumberAnimation { to: 1.0; duration: 400; easing.type: Easing.InQuad }
+            }
+
+            Text {
+              anchors.centerIn: parent
+              // Nerd Font microphone glyphs (same as shell Microphone widget)
+              text: root.micActive ? "󰍭" : "󰍬"
+              color: root.micActive ? Color.background : Color.accent
+              font.family: "monospace"
+              font.pixelSize: Style.font.display
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.toggleMic()
+            }
+          }
+
+          // caption under circle
+          Text {
+            anchors.top: micCircle.bottom
+            anchors.topMargin: -Style.space(2)
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: false
+            text: ""
+          }
         }
 
-        PanelSeparator { }
-
-        // Last answer
-        Text {
-          width: parent.width
-          visible: root.lastAnswer !== ""
-          text: root.lastAnswer
-          color: root.barForeground
-          font.pixelSize: Style.font.body
-          wrapMode: Text.WordWrap
-        }
-
-        // History (recent tasks)
+        // ---- Live activity (gated by setting) ----
         Column {
           width: parent.width
-          visible: root.historyLines.length > 0
           spacing: Style.space(4)
+          visible: root.activity !== "" && root.liveActivity !== "off"
+
+          PanelSectionHeader {
+            text: "Working on it"
+          }
+
+          Text {
+            width: parent.width
+            text: root.activity
+            color: Color.muted
+            font.family: "monospace"
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+        }
+
+        // ---- Answer ----
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          visible: root.lastAnswer !== ""
+
+          PanelSectionHeader {
+            text: "Answer"
+          }
+
+          Text {
+            width: parent.width
+            text: root.lastAnswer
+            color: root.barForeground
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+        }
+
+        // ---- Recent ----
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          visible: root.historyLines.length > 0
 
           PanelSectionHeader {
             text: "Recent"
           }
 
           Repeater {
-            model: root.historyLines.length > 8 ? 8 : root.historyLines.length
+            model: root.historyLines.length > 4 ? 4 : root.historyLines.length
 
             Text {
               required property int index
@@ -273,24 +503,9 @@ Panel {
           }
         }
 
-        // Mic row (Google-Assistant style: push to talk, assistant does the rest)
-        Row {
-          width: parent.width
-          spacing: Style.space(8)
+        PanelSeparator { }
 
-          Button {
-            property bool recording: root.state === "listening"
-            text: recording ? "● Recording — tap to send" : "● Mic: tap to talk"
-            onClicked: {
-              micProcess.command = ["voxtype", "record", recording ? "stop" : "start", "--profile", "assistant"]
-              micProcess.running = true
-            }
-          }
-        }
-
-        // Footer actions
-
-        // Settings (always visible)
+        // ---- Settings (always visible, compact 2-col grid) ----
         Column {
           width: parent.width
           spacing: Style.space(8)
@@ -299,55 +514,62 @@ Panel {
             text: "Settings"
           }
 
-          Dropdown {
+          Grid {
             width: parent.width
-            label: "Brain"
-            options: ["omp", "opencode", "claude", "codex", "gemini"]
-            value: root.brain
-            onChanged: function(v) { root.setSetting("brain", v) }
-          }
+            columns: 2
+            columnSpacing: Style.space(8)
+            rowSpacing: Style.space(8)
 
-          Dropdown {
-            width: parent.width
-            label: "Personality"
-            options: root.personaOptions
-            value: root.personality
-            onChanged: function(v) { root.setSetting("personality", v) }
-          }
+            Dropdown {
+              width: (parent.width - Style.space(8)) / 2
+              label: "Brain"
+              options: ["omp", "opencode", "claude", "codex", "gemini"]
+              value: root.brain
+              onChanged: function(v) { root.setSetting("brain", v) }
+            }
 
-          Dropdown {
-            width: parent.width
-            label: "Speech to text"
-            options: ["parakeet", "whisper-tiny", "whisper-small", "whisper-medium", "whisper-large-v3-turbo"]
-            value: root.sttEngine
-            onChanged: function(v) { root.setSetting("stt_engine", v) }
-          }
+            Dropdown {
+              width: (parent.width - Style.space(8)) / 2
+              label: "Personality"
+              options: root.personaOptions
+              value: root.personality
+              onChanged: function(v) { root.setSetting("personality", v) }
+            }
 
-          Dropdown {
-            width: parent.width
-            label: "Voice"
-            options: root.voiceOptions
-            value: root.ttsVoice
-            onChanged: function(v) {
-              if (v === "piper (alan)") {
-                root.setSetting("tts.backend", "piper")
-              } else {
-                root.setSetting("tts.backend", "kyutai")
-                root.setSetting("tts.voice", v)
+            Dropdown {
+              width: (parent.width - Style.space(8)) / 2
+              label: "Speech to text"
+              options: ["parakeet", "whisper-tiny", "whisper-small", "whisper-medium", "whisper-large-v3-turbo"]
+              value: root.sttEngine
+              onChanged: function(v) { root.setSetting("stt_engine", v) }
+            }
+
+            Dropdown {
+              width: (parent.width - Style.space(8)) / 2
+              label: "Voice"
+              options: root.voiceOptions
+              value: root.ttsVoice
+              onChanged: function(v) {
+                if (v === "piper (alan)") {
+                  root.setSetting("tts.backend", "piper")
+                } else {
+                  root.setSetting("tts.backend", "kyutai")
+                  root.setSetting("tts.voice", v)
+                }
               }
             }
-          }
 
-          Dropdown {
-            width: parent.width
-            label: "Show live activity"
-            options: ["on", "off"]
-            value: root.liveActivity
-            onChanged: function(v) { root.setSetting("live_activity", v); root.liveActivity = v }
+            Dropdown {
+              width: (parent.width - Style.space(8)) / 2
+              label: "Live activity"
+              options: ["on", "off"]
+              value: root.liveActivity
+              onChanged: function(v) { root.setSetting("live_activity", v); root.liveActivity = v }
+            }
           }
         }
 
-        PanelSeparator { }
+        // ---- Footer ----
         Row {
           width: parent.width
           spacing: Style.space(6)
@@ -375,4 +597,12 @@ Panel {
     running: false
     command: ["foot", "-e", "tmux", "attach", "-t", "jarvis"]
   }
-}// touch 1789052569
+
+  // Mascot animation timer
+  Timer {
+    interval: root.state === "thinking" ? 250 : 500
+    running: true
+    repeat: true
+    onTriggered: root.frame++
+  }
+}

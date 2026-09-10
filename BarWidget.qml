@@ -49,15 +49,16 @@ BarWidget {
   property string activity: ""
   property int frame: 0
 
+  // Kaomoji faces per state
   readonly property string face: {
     if (state === "thinking") {
-      var spin = ["[-]", "[/]", "[-]", "[\\]"]
-      return spin[frame % 4]
+      var spin = ["◕◔", "◕◑", "◕◒", "◕◐"]
+      return "(◕‿" + spin[frame % 4] + ")"
     }
-    if (state === "listening") return "[=.]"
-    if (state === "speaking") return "[o.]"
-    // idle: blink between open and closed eyes
-    return (frame % 6 < 5) ? "[-.]" : "[-_-]"
+    if (state === "listening") return (frame % 2 === 0) ? "✧(◉‿◉)" : "(◉‿◉)"
+    if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕‿◕)"
+    // idle: blink every ~10 frames
+    return (frame % 10 < 9) ? "(◕‿◕)" : "(◕_◕)"
   }
 
   readonly property color faceColor: {
@@ -89,6 +90,7 @@ BarWidget {
       statusProcess.running = true
     }
   }
+
   Process {
     id: statusProcess
     running: false
