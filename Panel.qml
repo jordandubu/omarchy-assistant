@@ -28,27 +28,6 @@ Panel {
   property var personaOptions: ["default"]
   property var voiceOptions: ["george"]
 
-  // Mascot animation
-  property int frame: 0
-
-  // Kaomoji mascot faces per state (robot style, animated)
-  readonly property string mascotFace: {
-    if (state === "thinking") {
-      var spin = ["(◕ᴗ◕)◔", "(◕ᴗ◕)◐", "(◕ᴗ◕)◑", "(◕ᴗ◕)◒"]
-      return spin[frame % 4]
-    }
-    if (state === "listening") return (frame % 2 === 0) ? "✧(●ᴗ●)" : "(●ᴗ●)"
-    if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕ᴗ◕)"
-    // idle: blink every ~8 frames
-    return (frame % 8 < 7) ? "(◕ᴗ◕)" : "(◕_◕)"
-  }
-
-  readonly property color mascotColor: {
-    if (state === "thinking") return Color.accent
-    if (state === "listening") return Color.urgent
-    if (state === "speaking") return Color.accent
-    return Color.foreground
-  }
 
   readonly property bool micActive: state === "listening"
 
@@ -258,158 +237,8 @@ Panel {
               onClicked: root.toggleMic()
             }
           }
-
-          // caption under circle
-          Text {
-            anchors.top: micCircle.bottom
-            anchors.topMargin: -Style.space(2)
-            anchors.horizontalCenter: parent.horizontalCenter
-            visible: false
-            text: ""
-          }
         }
 
-        // ---- Mascot under the mic ----
-        Item {
-          id: mascot
-          width: parent.width
-          height: mascotEyeFace.height + statusText.height + Style.space(4)
-
-          // Eyes dart randomly around; cuter idle behavior
-          property point look: Qt.point(0, 0)
-          readonly property real eyeSize: Style.space(14)
-          readonly property real pupilSize: Style.space(6)
-          readonly property real lookRange: eyeSize / 4.0
-
-          // Wink cycle in idle: left-eye wink at frame 4, right-eye wink at frame 11
-          readonly property int winkPhase: frame % 14
-          readonly property bool winkingLeft: state === "idle" && winkPhase === 4
-          readonly property bool winkingRight: state === "idle" && winkPhase === 11
-          readonly property bool blinking: state === "idle" && winkPhase === 9
-
-          // Dart timer: eyes jump to a random spot, hold, jump again (idle/listening)
-          Timer {
-            running: root.state === "idle" || root.state === "listening"
-            repeat: true
-            interval: 1800 + Math.random() * 1600
-            onTriggered: {
-              var a = Math.random() * Math.PI * 2
-              var r = Math.random() * mascot.lookRange
-              mascot.look = Qt.point(Math.cos(a) * r, Math.sin(a) * r * 0.6)
-            }
-          }
-
-          // Micro-jitter while busy (thinking/speaking)
-          Timer {
-            running: root.state === "thinking" || root.state === "speaking"
-            repeat: true
-            interval: 320
-            onTriggered: {
-              mascot.look = Qt.point((Math.random() - 0.5) * mascot.lookRange,
-                                     (Math.random() - 0.5) * mascot.lookRange * 0.6)
-            }
-          }
-
-          // Ease look back to center when timers stop (reset on state change)
-          onStateChanged: mascot.look = Qt.point(0, 0)
-
-          // Mascot head
-          Item {
-            id: mascotEyeFace
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 0
-            width: eyeL.width + Style.space(6) + eyeR.width + Style.space(12)
-            height: Math.max(eyeL.height, mouthText.height)
-
-            // Left eye (squints on wink/blink, pupil hides)
-            Rectangle {
-              id: eyeL
-              x: 0
-              anchors.verticalCenter: parent.verticalCenter
-              width: mascot.eyeSize
-              height: (mascot.winkingLeft || mascot.blinking) ? mascot.pupilSize : mascot.eyeSize * 1.35
-              radius: width / 2
-              color: root.mascotColor
-
-              Behavior on height { NumberAnimation { duration: 90 } }
-
-              Rectangle {
-                anchors.centerIn: parent
-                width: mascot.pupilSize
-                height: mascot.pupilSize
-                radius: width / 2
-                color: Color.background
-                visible: !mascot.winkingLeft && !mascot.blinking
-                x: parent.width / 2 - width / 2 + mascot.look.x
-                y: parent.height / 2 - height / 2 + mascot.look.y
-              }
-            }
-
-            // Mouth
-            Text {
-              id: mouthText
-              anchors.verticalCenter: parent.verticalCenter
-              x: eyeL.width + Style.space(4)
-              text: {
-                if (root.state === "speaking") return (root.frame % 2 === 0) ? "o" : "ᴗ"
-                if (root.state === "listening") return "◡"
-                if (root.state === "thinking") return "…"
-                if (root.winkingLeft || root.winkingRight) return "ᴗ"   // cheeky grin while winking
-                return "ᴗ"
-              }
-              color: root.mascotColor
-              font.family: "monospace"
-              font.pixelSize: Style.font.heading
-              font.bold: true
-            }
-
-            // Right eye (squints on wink/blink, pupil hides)
-            Rectangle {
-              id: eyeR
-              x: eyeL.width + Style.space(6) + mouthText.width + Style.space(2)
-              anchors.verticalCenter: parent.verticalCenter
-              width: mascot.eyeSize
-              height: (mascot.winkingRight || mascot.blinking) ? mascot.pupilSize : mascot.eyeSize * 1.35
-              radius: width / 2
-              color: root.mascotColor
-
-              Behavior on height { NumberAnimation { duration: 90 } }
-
-              Rectangle {
-                anchors.centerIn: parent
-                width: mascot.pupilSize
-                height: mascot.pupilSize
-                radius: width / 2
-                color: Color.background
-                visible: !mascot.winkingRight && !mascot.blinking
-                x: parent.width / 2 - width / 2 + mascot.look.x
-                y: parent.height / 2 - height / 2 + mascot.look.y
-              }
-            }
-
-            // Breathe/pulse while busy
-            SequentialAnimation on opacity {
-              running: root.state !== "idle"
-              loops: Animation.Infinite
-              NumberAnimation { to: 0.55; duration: 500 }
-              NumberAnimation { to: 1.0; duration: 500 }
-            }
-          }
-
-          Text {
-            id: statusText
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            text: {
-              if (root.state === "thinking") return "thinking…"
-              if (root.state === "listening") return "listening — tap mic to send"
-              if (root.state === "speaking") return "speaking"
-              return "ready"
-            }
-            color: Color.muted
-            font.pixelSize: Style.font.caption
-          }
-        }
 
         // ---- Live activity (gated by setting) ----
         Column {
@@ -561,7 +390,6 @@ Panel {
           }
         }
       }
-    }
   }
 
   Process {
@@ -570,11 +398,3 @@ Panel {
     command: ["foot", "-e", "tmux", "attach", "-t", "jarvis"]
   }
 
-  // Mascot animation timer
-  Timer {
-    interval: root.state === "thinking" ? 250 : 500
-    running: true
-    repeat: true
-    onTriggered: root.frame++
-  }
-}
