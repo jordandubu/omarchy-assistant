@@ -49,18 +49,23 @@ BarWidget {
   property string activity: ""
   property int frame: 0
 
-  // Kaomoji faces per state
+  // Kaomoji faces per state — winks, blinks, glances; never two round dots
   readonly property string face: {
     if (state === "thinking") {
-      var spin = ["◕◔", "◕◑", "◕◒", "◕◐"]
-      return "(◕‿" + spin[frame % 4] + ")"
+      // eyes glance side to side while thinking
+      var spin = ["◕‿◉", "◉‿◕", "◕‿◕", "◉‿◕"]
+      return "(" + spin[frame % 4] + ")"
     }
-    if (state === "listening") return (frame % 2 === 0) ? "✧(◉‿◉)" : "(◉‿◉)"
-    if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕‿◕)"
-    // idle: blink + dart eyes between glances
-    var glances = ["(◕‿◕)", "(◕‿◕)", "(◕◕‿)", "(◕‿◕)", "(◕‿◕)", "(◕‿◕)", "(◕‿◕)", "(◕‿◕)"]
-    if (frame % 10 === 9) return "(◕_◕)"          // blink
-    return glances[frame % glances.length]
+    if (state === "listening") return (frame % 2 === 0) ? "✧(◕ᴗ◕)" : "(◕ᴗ◕)"
+    if (state === "speaking") return (frame % 2 === 0) ? "(◕ᴗ◕)" : "(◕ᴗ◕)"   // mouth animates in panel
+    // idle: blink + occasional wink + glance
+    var f = frame % 14
+    if (f === 9) return "(˘ᴗ˘)"                       // blink — both eyes closed
+    if (f === 11) return "(◕ᴗ^)ノ"                     // WINK right eye
+    if (f === 4) return "(^ᴗ◕)"                        // WINK left eye
+    if (f === 6) return "(◕‿◉)"                        // glance right
+    if (f === 12) return "(◉‿◕)"                       // glance left
+    return "(◕ᴗ◕)"
   }
 
   readonly property color faceColor: {

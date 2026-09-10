@@ -224,11 +224,17 @@ Panel {
           width: parent.width
           height: mascotEyeFace.height + statusText.height + Style.space(4)
 
-          // Eyes dart randomly around (no cursor tracking; cuter idle behavior)
+          // Eyes dart randomly around; cuter idle behavior
           property point look: Qt.point(0, 0)
           readonly property real eyeSize: Style.space(14)
           readonly property real pupilSize: Style.space(6)
           readonly property real lookRange: eyeSize / 4.0
+
+          // Wink cycle in idle: left-eye wink at frame 4, right-eye wink at frame 11
+          readonly property int winkPhase: frame % 14
+          readonly property bool winkingLeft: state === "idle" && winkPhase === 4
+          readonly property bool winkingRight: state === "idle" && winkPhase === 11
+          readonly property bool blinking: state === "idle" && winkPhase === 9
 
           // Dart timer: eyes jump to a random spot, hold, jump again (idle/listening)
           Timer {
@@ -264,15 +270,17 @@ Panel {
             width: eyeL.width + Style.space(6) + eyeR.width + Style.space(12)
             height: Math.max(eyeL.height, mouthText.height)
 
-            // Left eye
+            // Left eye (squints on wink/blink, pupil hides)
             Rectangle {
               id: eyeL
               x: 0
               anchors.verticalCenter: parent.verticalCenter
               width: mascot.eyeSize
-              height: mascot.eyeSize * 1.35
+              height: (mascot.winkingLeft || mascot.blinking) ? mascot.pupilSize : mascot.eyeSize * 1.35
               radius: width / 2
               color: root.mascotColor
+
+              Behavior on height { NumberAnimation { duration: 90 } }
 
               Rectangle {
                 anchors.centerIn: parent
@@ -280,6 +288,7 @@ Panel {
                 height: mascot.pupilSize
                 radius: width / 2
                 color: Color.background
+                visible: !mascot.winkingLeft && !mascot.blinking
                 x: parent.width / 2 - width / 2 + mascot.look.x
                 y: parent.height / 2 - height / 2 + mascot.look.y
               }
@@ -294,6 +303,7 @@ Panel {
                 if (root.state === "speaking") return (root.frame % 2 === 0) ? "o" : "‿"
                 if (root.state === "listening") return "◡"
                 if (root.state === "thinking") return "…"
+                if (root.winkingLeft || root.winkingRight) return "ᴗ"   // cheeky grin while winking
                 return "‿"
               }
               color: root.mascotColor
@@ -302,15 +312,17 @@ Panel {
               font.bold: true
             }
 
-            // Right eye
+            // Right eye (squints on wink/blink, pupil hides)
             Rectangle {
               id: eyeR
               x: eyeL.width + Style.space(6) + mouthText.width + Style.space(2)
               anchors.verticalCenter: parent.verticalCenter
               width: mascot.eyeSize
-              height: mascot.eyeSize * 1.35
+              height: (mascot.winkingRight || mascot.blinking) ? mascot.pupilSize : mascot.eyeSize * 1.35
               radius: width / 2
               color: root.mascotColor
+
+              Behavior on height { NumberAnimation { duration: 90 } }
 
               Rectangle {
                 anchors.centerIn: parent
@@ -318,6 +330,7 @@ Panel {
                 height: mascot.pupilSize
                 radius: width / 2
                 color: Color.background
+                visible: !mascot.winkingRight && !mascot.blinking
                 x: parent.width / 2 - width / 2 + mascot.look.x
                 y: parent.height / 2 - height / 2 + mascot.look.y
               }
