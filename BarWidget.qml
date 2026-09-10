@@ -53,7 +53,7 @@ BarWidget {
   readonly property string face: {
     if (state === "thinking") {
       // eyes glance side to side while thinking
-      var spin = ["◕‿◉", "◉‿◕", "◕‿◕", "◉‿◕"]
+      var spin = ["◕ᴗ◉", "◉ᴗ◕", "◕ᴗ◕", "◉ᴗ◕"]
       return "(" + spin[frame % 4] + ")"
     }
     if (state === "listening") return (frame % 2 === 0) ? "✧(◕ᴗ◕)" : "(◕ᴗ◕)"
@@ -63,8 +63,8 @@ BarWidget {
     if (f === 9) return "(˘ᴗ˘)"                       // blink — both eyes closed
     if (f === 11) return "(◕ᴗ^)ノ"                     // WINK right eye
     if (f === 4) return "(^ᴗ◕)"                        // WINK left eye
-    if (f === 6) return "(◕‿◉)"                        // glance right
-    if (f === 12) return "(◉‿◕)"                       // glance left
+    if (f === 6) return "(◕ᴗ◉)"                        // glance right
+    if (f === 12) return "(◉ᴗ◕)"                       // glance left
     return "(◕ᴗ◕)"
   }
 

@@ -34,13 +34,13 @@ Panel {
   // Kaomoji mascot faces per state (robot style, animated)
   readonly property string mascotFace: {
     if (state === "thinking") {
-      var spin = ["(◕‿◕)◔", "(◕‿◕)◐", "(◕‿◕)◑", "(◕‿◕)◒"]
+      var spin = ["(◕ᴗ◕)◔", "(◕ᴗ◕)◐", "(◕ᴗ◕)◑", "(◕ᴗ◕)◒"]
       return spin[frame % 4]
     }
-    if (state === "listening") return (frame % 2 === 0) ? "✧(◉‿◉)" : "(◉‿◉)"
-    if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕‿◕)"
+    if (state === "listening") return (frame % 2 === 0) ? "✧(◉ᴗ◉)" : "(◉ᴗ◉)"
+    if (state === "speaking") return (frame % 2 === 0) ? "(◕o◕)" : "(◕ᴗ◕)"
     // idle: blink every ~8 frames
-    return (frame % 8 < 7) ? "(◕‿◕)" : "(◕_◕)"
+    return (frame % 8 < 7) ? "(◕ᴗ◕)" : "(◕_◕)"
   }
 
   readonly property color mascotColor: {
@@ -300,11 +300,11 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               x: eyeL.width + Style.space(4)
               text: {
-                if (root.state === "speaking") return (root.frame % 2 === 0) ? "o" : "‿"
+                if (root.state === "speaking") return (root.frame % 2 === 0) ? "o" : "ᴗ"
                 if (root.state === "listening") return "◡"
                 if (root.state === "thinking") return "…"
                 if (root.winkingLeft || root.winkingRight) return "ᴗ"   // cheeky grin while winking
-                return "‿"
+                return "ᴗ"
               }
               color: root.mascotColor
               font.family: "monospace"
