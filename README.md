@@ -39,6 +39,20 @@ Then add the push-to-talk keys to `~/.config/hypr/bindings.lua`:
 and reload the shell. Requires: voxtype (STT), tmux, an agent CLI for the brain
 (omp by default), `omarchy-notification-send` (omarchy built-in).
 
+## Uninstall
+
+    omarchy plugin remove omarchy-assistant --yes
+
+Remove the pipeline scripts if you don't want them:
+
+    rm -f ~/.local/bin/jarvis-{router,brain,worker,stop} ~/.local/bin/voice-router
+
+Remove the voxtype assistant profile by deleting the `[profiles.assistant]`
+section from `~/.config/voxtype/config.toml`, and remove your settings with
+`rm -rf ~/.config/omarchy-assistant`. With `--with-tts`:
+`systemctl --user disable --now omarchy-assistant-tts.service` and delete
+`~/.config/systemd/user/omarchy-assistant-tts.service`.
+
 ## License
 
 MIT
