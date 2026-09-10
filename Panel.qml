@@ -41,7 +41,7 @@ Panel {
   readonly property var settingRows: [
     {
       label: "Brain",
-      options: ["omp", "opencode", "claude", "codex", "gemini"],
+      options: ["omp", "opencode", "claude", "codex", "gemini", "cursor-agent", "crush"],
       value: brain,
       apply: function(v) { setSetting("brain", v) }
     },
