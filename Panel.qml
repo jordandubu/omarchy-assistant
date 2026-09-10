@@ -309,13 +309,20 @@ Panel {
             }
 
             Text {
-              text: root.state === "thinking" ? (root.activity || "")
+              // Show what was heard while working: strip "[HH:MM:SS] prompt: " prefix
+              property string heard: {
+                var a = root.activity || ""
+                var i = a.indexOf("prompt: ")
+                return i >= 0 ? a.substring(i + 8) : a
+              }
+              text: root.state === "thinking" ? ("heard: " + (root.heard || ""))
                     : root.state === "idle" ? "or hold SUPER+A and speak"
                     : ""
-              visible: text !== ""
-              color: root.state === "thinking" ? root.dim : root.foreground
+              visible: text !== "" && !(root.state === "thinking" && root.heard === "")
+              color: root.state === "thinking" ? root.foreground : root.foreground
               opacity: root.state === "thinking" ? 1.0 : 0.75
               font.pixelSize: Style.font.caption
+              elide: Text.ElideMiddle
             }
           }
         }
