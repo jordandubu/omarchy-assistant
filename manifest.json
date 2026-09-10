@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy-assistant",
+  "name": "Omarchy AI Assistant",
+  "version": "0.1.0",
+  "author": "Jordy",
+  "license": "MIT",
+  "description": "Animated ASCII assistant: voice + text commands, live agent activity, spoken replies.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "AI Assistant",
+    "category": "Product",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
