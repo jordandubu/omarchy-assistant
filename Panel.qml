@@ -8,6 +8,7 @@ Panel {
   id: root
   moduleName: "omarchy-assistant"
   manageIpc: true
+  ipcTarget: "omarchy-assistant"
 
   property var anchorItem: null
   property var hostWidget: null
@@ -30,6 +31,52 @@ Panel {
 
 
   readonly property bool micActive: state === "listening"
+  readonly property color mascotTextColor: {
+    if (state === "listening") return Color.urgent
+    if (state !== "idle") return Color.accent
+    return Color.muted
+  }
+
+  // Settings table: one row per setting (label + dropdown + apply)
+  readonly property var settingRows: [
+    {
+      label: "Brain",
+      options: ["omp", "opencode", "claude", "codex", "gemini"],
+      value: brain,
+      apply: function(v) { setSetting("brain", v) }
+    },
+    {
+      label: "Personality",
+      options: personaOptions,
+      value: personality,
+      apply: function(v) { setSetting("personality", v) }
+    },
+    {
+      label: "Speech to text",
+      options: ["parakeet", "whisper-tiny", "whisper-small", "whisper-medium", "whisper-large-v3-turbo"],
+      value: sttEngine,
+      apply: function(v) { setSetting("stt_engine", v) }
+    },
+    {
+      label: "Voice",
+      options: voiceOptions,
+      value: ttsVoice,
+      apply: function(v) {
+        if (v === "piper (alan)") {
+          setSetting("tts.backend", "piper")
+        } else {
+          setSetting("tts.backend", "kyutai")
+          setSetting("tts.voice", v)
+        }
+      }
+    },
+    {
+      label: "Live activity",
+      options: ["on", "off"],
+      value: liveActivity,
+      apply: function(v) { setSetting("live_activity", v); liveActivity = v }
+    }
+  ]
 
   function reload() {
     answerFile.reload()
@@ -195,52 +242,66 @@ Panel {
       Column {
         id: content
         width: parent.width
-        spacing: Style.space(8)
+        spacing: Style.space(6)
 
-
-        // ---- Big mic button ----
-        Item {
+        // ---- Mic hero: big button + state label ----
+        Column {
           width: parent.width
-          height: micButtonSize
+          spacing: Style.space(4)
 
-          readonly property real micButtonSize: Style.space(44)
+          Item {
+            width: parent.width
+            height: Style.space(64)
 
-          Rectangle {
-            id: micCircle
-            anchors.centerIn: parent
-            width: parent.height
-            height: parent.height
-            radius: width / 2
-            color: root.micActive ? Color.urgent : Style.normalFill
-            border.color: root.micActive ? Color.urgent : Color.accent
-            border.width: root.micActive ? 0 : 1
-
-            SequentialAnimation on scale {
-              running: root.micActive
-              loops: Animation.Infinite
-              NumberAnimation { to: 1.12; duration: 400; easing.type: Easing.OutQuad }
-              NumberAnimation { to: 1.0; duration: 400; easing.type: Easing.InQuad }
-            }
-
-            Text {
+            Rectangle {
+              id: micCircle
               anchors.centerIn: parent
-              // Nerd Font microphone glyphs (same as shell Microphone widget)
-              text: root.micActive ? "󰍭" : "󰍬"
-              color: root.micActive ? Color.background : Color.accent
-              font.family: "monospace"
-              font.pixelSize: Style.font.display
-            }
+              width: Style.space(64)
+              height: Style.space(64)
+              radius: width / 2
+              color: root.micActive ? Color.urgent : Style.normalFill
+              border.color: root.micActive ? Color.urgent : Color.accent
+              border.width: root.micActive ? 0 : 1
 
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.toggleMic()
+              SequentialAnimation on scale {
+                running: root.micActive
+                loops: Animation.Infinite
+                NumberAnimation { to: 1.12; duration: 400; easing.type: Easing.OutQuad }
+                NumberAnimation { to: 1.0; duration: 400; easing.type: Easing.InQuad }
+              }
+
+              Text {
+                anchors.centerIn: parent
+                text: root.micActive ? "󰍭" : "󰍬"   // md mic-off / mic
+                color: root.micActive ? Color.background : Color.accent
+                font.family: "monospace"
+                font.pixelSize: Style.font.displayLarge
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.toggleMic()
+              }
             }
+          }
+
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: {
+              if (root.state === "listening") return "listening — tap again to send"
+              if (root.state === "thinking") return "thinking…"
+              if (root.state === "speaking") return "speaking…"
+              return "tap to talk"
+            }
+            color: root.state === "idle" ? Color.muted : root.mascotTextColor
+            font.pixelSize: Style.font.caption
           }
         }
 
+        PanelSeparator { }
 
-        // ---- Live activity (gated by setting) ----
+        // ---- Live activity ----
         Column {
           width: parent.width
           spacing: Style.space(4)
@@ -282,7 +343,7 @@ Panel {
         // ---- Recent ----
         Column {
           width: parent.width
-          spacing: Style.space(4)
+          spacing: Style.space(3)
           visible: root.historyLines.length > 0
 
           PanelSectionHeader {
@@ -290,7 +351,7 @@ Panel {
           }
 
           Repeater {
-            model: root.historyLines.length > 4 ? 4 : root.historyLines.length
+            model: root.historyLines.length > 3 ? 3 : root.historyLines.length
 
             Text {
               required property int index
@@ -306,95 +367,55 @@ Panel {
 
         PanelSeparator { }
 
-        // ---- Settings (always visible, compact 2-col grid) ----
+        // ---- Settings: label left, control right ----
         Column {
           width: parent.width
-          spacing: Style.space(8)
+          spacing: Style.space(6)
 
           PanelSectionHeader {
             text: "Settings"
           }
 
-          Grid {
+          Column {
             width: parent.width
-            columns: 2
-            columnSpacing: Style.space(8)
-            rowSpacing: Style.space(8)
+            spacing: Style.space(6)
 
-            Dropdown {
-              width: (parent.width - Style.space(8)) / 2
-              label: "Brain"
-              options: ["omp", "opencode", "claude", "codex", "gemini"]
-              value: root.brain
-              onChanged: function(v) { root.setSetting("brain", v) }
-            }
+            Repeater {
+              model: root.settingRows
 
-            Dropdown {
-              width: (parent.width - Style.space(8)) / 2
-              label: "Personality"
-              options: root.personaOptions
-              value: root.personality
-              onChanged: function(v) { root.setSetting("personality", v) }
-            }
+              delegate: Row {
+                required property int index
+                width: parent.width
+                spacing: Style.space(6)
 
-            Dropdown {
-              width: (parent.width - Style.space(8)) / 2
-              label: "Speech to text"
-              options: ["parakeet", "whisper-tiny", "whisper-small", "whisper-medium", "whisper-large-v3-turbo"]
-              value: root.sttEngine
-              onChanged: function(v) { root.setSetting("stt_engine", v) }
-            }
+                Text {
+                  width: parent.width * 0.38
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.settingRows[index].label
+                  color: Color.muted
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
 
-            Dropdown {
-              width: (parent.width - Style.space(8)) / 2
-              label: "Voice"
-              options: root.voiceOptions
-              value: root.ttsVoice
-              onChanged: function(v) {
-                if (v === "piper (alan)") {
-                  root.setSetting("tts.backend", "piper")
-                } else {
-                  root.setSetting("tts.backend", "kyutai")
-                  root.setSetting("tts.voice", v)
+                Dropdown {
+                  width: parent.width * 0.62
+                  options: root.settingRows[index].options
+                  value: root.settingRows[index].value
+                  onChanged: function(v) { root.settingRows[index].apply(v) }
                 }
               }
             }
-
-            Dropdown {
-              width: (parent.width - Style.space(8)) / 2
-              label: "Live activity"
-              options: ["on", "off"]
-              value: root.liveActivity
-              onChanged: function(v) { root.setSetting("live_activity", v); root.liveActivity = v }
-            }
           }
         }
 
-        // ---- Footer ----
-        Row {
+        // ---- Stop (only while working) ----
+        Button {
           width: parent.width
-          spacing: Style.space(6)
-
-          Button {
-            text: "Stop"
-            visible: root.state === "thinking"
-            onClicked: root.stop()
-          }
-
-          Button {
-            text: "Terminal"
-            onClicked: {
-              terminalProcess.running = true
-              root.close()
-            }
-          }
+          text: "Stop assistant"
+          visible: root.state === "thinking"
+          onClicked: root.stop()
         }
       }
+    }
   }
-
-  Process {
-    id: terminalProcess
-    running: false
-    command: ["foot", "-e", "tmux", "attach", "-t", "jarvis"]
-  }
-
+}
