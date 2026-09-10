@@ -7,7 +7,7 @@
 set -u
 CFG="$HOME/.config/omarchy-assistant/settings.json"
 mkdir -p "$(dirname "$CFG")"
-[ -f "$CFG" ] || echo '{"brain":"omp","stt_engine":"parakeet","tts":{"backend":"kyutai","voice":"george","fallback":"piper"},"personality":"default"}' > "$CFG"
+[ -f "$CFG" ] || echo '{"brain":"omp","stt_engine":"parakeet","tts":{"backend":"kyutai","voice":"george","fallback":"piper"},"personality":"default","live_activity":"on"}' > "$CFG"
 
 case "${1:-}" in
   get)

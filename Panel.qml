@@ -23,6 +23,7 @@ Panel {
   property string brain: "omp"
   property string personality: "default"
   property string sttEngine: "parakeet"
+  property string liveActivity: "on"
   property string ttsVoice: "george"
   property var personaOptions: ["default"]
   property var voiceOptions: ["george"]
@@ -43,15 +44,6 @@ Panel {
 
   function open() { root.controller.show() }
   function close() { root.controller.hide() }
-
-  function send() {
-    var text = input.text.trim()
-    if (text === "" || brainProcess.running) return
-    brainProcess.command = [Quickshell.env("HOME") + "/.local/bin/jarvis-brain", text]
-    brainProcess.running = true
-    input.text = ""
-    root.reload()
-  }
 
   function stop() {
     stopProcess.running = true
@@ -93,13 +85,14 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        // one line: brain|personality|stt|voice
+        // one line: brain|personality|stt|voice|live
         var p = String(text || "").trim().split("|")
         if (p.length >= 4) {
           root.brain = p[0]
           root.personality = p[1]
           root.sttEngine = p[2]
           root.ttsVoice = p[3]
+          if (p.length >= 5) root.liveActivity = p[4]
         }
       }
     }
@@ -159,13 +152,19 @@ Panel {
     ]
     settingsGetProcess.command = ["bash", "-c",
       "sh=" + sh + "/settings.sh; " +
-      "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)\""]
+      "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)|$(\"$sh\" get live_activity)\""]
     personasProcess.command = ["bash", "-c", sh + "/settings.sh personas"]
     voicesProcess.command = ["bash", "-c", sh + "/settings.sh voices"]
   }
   Process {
     id: brainProcess
     running: false
+  }
+
+  Process {
+    id: micProcess
+    running: false
+    command: ["voxtype", "record", "start", "--profile", "assistant"]
   }
 
   Process {
@@ -226,10 +225,10 @@ Panel {
           }
         }
 
-        // Activity line while thinking
+        // Activity line while thinking (controlled by Live activity setting)
         Text {
           width: parent.width
-          visible: root.activity !== ""
+          visible: root.activity !== "" && root.liveActivity !== "off"
           text: root.activity
           color: Color.muted
           font.family: "monospace"
@@ -246,15 +245,6 @@ Panel {
           text: root.lastAnswer
           color: root.barForeground
           font.pixelSize: Style.font.body
-          wrapMode: Text.WordWrap
-        }
-
-        Text {
-          width: parent.width
-          visible: root.lastAnswer === ""
-          text: "Ask something — type below or hold SUPER+A and speak."
-          color: Color.muted
-          font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
         }
 
@@ -283,28 +273,24 @@ Panel {
           }
         }
 
-        // Input row
+        // Mic row (Google-Assistant style: push to talk, assistant does the rest)
         Row {
           width: parent.width
-          spacing: Style.space(6)
-
-          TextField {
-            id: input
-            width: parent.width - sendButton.width - Style.space(6)
-            placeholderText: "Ask the assistant…"
-            onAccepted: root.send()
-          }
+          spacing: Style.space(8)
 
           Button {
-            id: sendButton
-            text: "Send"
-            onClicked: root.send()
+            property bool recording: root.state === "listening"
+            text: recording ? "● Recording — tap to send" : "● Mic: tap to talk"
+            onClicked: {
+              micProcess.command = ["voxtype", "record", recording ? "stop" : "start", "--profile", "assistant"]
+              micProcess.running = true
+            }
           }
         }
 
         // Footer actions
 
-        // Settings
+        // Settings (always visible)
         Column {
           width: parent.width
           spacing: Style.space(8)
@@ -351,6 +337,14 @@ Panel {
               }
             }
           }
+
+          Dropdown {
+            width: parent.width
+            label: "Show live activity"
+            options: ["on", "off"]
+            value: root.liveActivity
+            onChanged: function(v) { root.setSetting("live_activity", v); root.liveActivity = v }
+          }
         }
 
         PanelSeparator { }
@@ -381,4 +375,4 @@ Panel {
     running: false
     command: ["foot", "-e", "tmux", "attach", "-t", "jarvis"]
   }
-}
+}// touch 1789052569
