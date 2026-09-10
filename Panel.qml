@@ -258,6 +258,7 @@ Panel {
             stdout: StdioCollector {
               waitForEnd: true
               onStreamFinished: {
+                mascot.updateHeadPos()   // window may have moved since last tick
                 var parts = String(text || "").trim().split(",")
                 if (parts.length === 2) {
                   mascot.globalX = Number(parts[0]) || 0
