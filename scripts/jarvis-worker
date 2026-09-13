@@ -1,9 +1,18 @@
 #!/bin/bash
 # Runs inside tmux session "jarvis": live activity on the pane + live.log, delivery after.
 # Args: PROMPT SYSTEM_PROMPT_PATH LIVE_PATH DONE_PATH [BRAIN]
-set -u
 PROMPT="$1"; SP="$2"; LIVE="$3"; DONE="$4"; BRAIN="${5:-omp}"
+if [ -f "$PROMPT" ]; then
+  PROMPT="$(cat "$PROMPT")"
+fi
 : > "$LIVE"
+
+handle_interrupt() {
+  echo -e "\n[stopped by user]" >> "$LIVE" 2>/dev/null
+  "$HOME/.local/bin/jarvis-stop" >/dev/null 2>&1
+  exit 130
+}
+trap handle_interrupt INT TERM
 
 S="$HOME/.config/omarchy-assistant/settings.json"
 TTS_BACKEND=$(python3 -c "import json;print(json.load(open('$S'))['tts']['backend'])" 2>/dev/null || echo kyutai)
@@ -14,10 +23,31 @@ JARVIS_LANGUAGE="$LANG_CODE" python3 - "$PROMPT" "$SP" "$LIVE" "$DONE" "$BRAIN" 
 import datetime, json, os, subprocess, sys
 
 prompt, sp_path, live_path, done_path, brain = sys.argv[1:6]
+if os.path.isfile(prompt):
+    try:
+        with open(prompt, "r", encoding="utf-8") as _pf:
+            prompt = _pf.read()
+    except Exception:
+        pass
 sp = open(sp_path).read()
 if lang_env := os.environ.get("JARVIS_LANGUAGE"):
     sp = sp.replace("Always reply in English, no exceptions.",
                     f"Always reply in {lang_env}, no exceptions.")
+
+import time as _time
+mem_file = os.path.expanduser("~/.local/share/omarchy-assistant/rolling-memory.json")
+try:
+    if os.path.exists(mem_file):
+        now = _time.time()
+        history = [item for item in json.load(open(mem_file)) if now - item.get("t", 0) <= 300]
+        if history:
+            lines = ["\n[Recent conversation within the last 5 minutes]:"]
+            for h in history[-5:]:
+                lines.append(f"User: {h.get('user', '')}")
+                lines.append(f"Assistant: {h.get('assistant', '')}")
+            sp += "\n" + "\n".join(lines)
+except Exception:
+    pass
 
 def log(msg):
     print(msg, flush=True)            # pane (stdout = tmux pty)
@@ -206,17 +236,79 @@ elif brain == "opencode":
     final = "\n".join(out_lines).strip()
     log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {final[:200]}")
 
+elif brain in ("agy", "antigravity"):
+    full_prompt = f"{sp}\n\nUser request: {prompt}"
+    cmd = ["agy", "-p", full_prompt, "--output-format", "stream-json", "--dangerously-skip-permissions"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    accumulated_text = []
+    for line in proc.stdout:
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        event_type = ev.get("event")
+        if event_type == "step_update":
+            su = ev.get("step_update") or {}
+            st = su.get("step_type")
+            if st == "tool":
+                tinfo = su.get("tool_info") or {}
+                tname = su.get("tool_name") or tinfo.get("name") or "tool"
+                params = tinfo.get("parameters") or {}
+                cmd_str = params.get("CommandLine") or params.get("query") or params.get("Url") or json.dumps(params)[:120]
+                note_tool(tname, str(cmd_str)[:120])
+            elif st == "agent_response":
+                td = su.get("text_delta")
+                if td:
+                    accumulated_text.append(td)
+        elif event_type == "result":
+            res = ev.get("result") or {}
+            resp = res.get("response")
+            if resp:
+                final = resp
+    proc.wait()
+    if not final and accumulated_text:
+        final = "".join(accumulated_text)
+    if final:
+        log(f"[{datetime.datetime.now():%H:%M:%S}] ▸ {final[:200]}")
+
 else:
     final = "Unknown brain: " + brain
     log(final)
 
 if final:
+    final = final.strip()
+    low = final.lower()
+    follow_ups = ["anything else", "can i help", "more i can do", "need anything", "help you with anything"]
+    if not any(f in low for f in follow_ups):
+        if not final.endswith((".", "!", "?")):
+            final += "."
+        final += " Is there anything else I can do for you?"
     open(done_path, "w").write(final)
     print("\n" + final)
+    try:
+        now = _time.time()
+        os.makedirs(os.path.dirname(mem_file), exist_ok=True)
+        history = []
+        if os.path.exists(mem_file):
+            history = [item for item in json.load(open(mem_file)) if now - item.get("t", 0) <= 300]
+        history.append({"t": now, "user": prompt, "assistant": final})
+        json.dump(history, open(mem_file, "w"), indent=2)
+    except Exception:
+        pass
 PYEOF
 
+if grep -q "\[stopped by user\]" "$LIVE" 2>/dev/null; then
+  exit 0
+fi
+
 ANSWER="$(cat "$DONE" 2>/dev/null)"
-[ -n "$ANSWER" ] || { echo "[stopped by user]"; echo "[stopped by user]" >> "$LIVE"; exit 0; }
+if [ -z "$ANSWER" ]; then
+  echo "[stopped or brain error]" >> "$LIVE"
+  ERR_MSG="Sorry, the assistant brain did not reply. The service may be busy or out of quota."
+  omarchy-notification-send -r 424242 -t 8000 "Assistant" "$ERR_MSG" 2>/dev/null
+  curl -s -m 3 -X POST http://localhost:8765/tts -F "text=$ERR_MSG" -F "voice_url=$TTS_VOICE" -o /tmp/jarvis-reply.wav 2>/dev/null && pw-play /tmp/jarvis-reply.wav 2>/dev/null
+  exit 0
+fi
 printf '%s\n' "$ANSWER" >> "$LIVE"
 printf '%s' "$ANSWER" | tr -d '\n' | wl-copy 2>/dev/null
 LOG="$(dirname "$LIVE")/$(date +%s).log"
@@ -232,3 +324,9 @@ else
   PIPER="$HOME/.local/share/jarvis-tts/bin/piper"
   [ -x "$PIPER" ] && printf '%s' "$ANSWER" | "$PIPER" -m "$VOICE" -f /tmp/jarvis-reply.wav 2>/dev/null && pw-play /tmp/jarvis-reply.wav 2>/dev/null
 fi
+
+# Trigger conversational follow-up for continuous listening
+WAKE_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/jarvis-wake"
+mkdir -p "$WAKE_DIR" 2>/dev/null
+touch "$WAKE_DIR/follow_up" 2>/dev/null
+

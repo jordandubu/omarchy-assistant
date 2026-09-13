@@ -8,6 +8,9 @@ LIVE="$ANS/live.log"
 DONE="$ANS/answer.txt"
 mkdir -p "$ANS"
 
+PROMPT_FILE="$ANS/prompt.txt"
+printf '%s' "$PROMPT" > "$PROMPT_FILE"
+
 S="$HOME/.config/omarchy-assistant/settings.json"
 BRAIN=$(python3 -c "import json;print(json.load(open('$S')).get('brain','omp'))" 2>/dev/null || echo omp)
 PERSONA=$(python3 -c "import json;print(json.load(open('$S')).get('personality','default'))" 2>/dev/null || echo default)
@@ -16,7 +19,7 @@ SP="$HOME/.config/omarchy-assistant/personas/$PERSONA.md"
 
 tmux kill-session -t jarvis 2>/dev/null
 tmux new-session -d -s jarvis -x 200 -y 50 \
-  "$HOME/.local/bin/jarvis-worker '$PROMPT' '$SP' '$LIVE' '$DONE' '$BRAIN'; sleep 86400"
+  bash -c '"$HOME/.local/bin/jarvis-worker" "$@"; sleep 86400' _ "$PROMPT_FILE" "$SP" "$LIVE" "$DONE" "$BRAIN"
 
 # Propagate GUI env into the tmux session so agent-run app launches work
 HYS=$(ls /run/user/$(id -u)/hypr 2>/dev/null | head -1)

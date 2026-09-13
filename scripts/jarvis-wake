@@ -26,6 +26,7 @@ WAKE_DIR = os.path.join(RT, "jarvis-wake")
 DISABLED = os.path.join(WAKE_DIR, "disabled")
 MAX_SPEECH = 30.0       # hard cap on a wake-word-triggered utterance (seconds)
 SILENCE = 1.2           # seconds of trailing silence that ends the utterance
+INITIAL_TIMEOUT = 8.0   # seconds to wait when listening if user does not speak
 SAMPLE_RATE = 16000
 
 # "omarchy" is not in vosk's vocabulary; use its near-homophones ("oh-mar*")
@@ -75,6 +76,13 @@ def stop_recording():
         start_new_session=True)
 
 
+def cancel_recording():
+    subprocess.Popen(
+        ["voxtype", "record", "cancel"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+
+
 def settings_flag(name, default=True):
     try:
         with open(SETTINGS) as f:
@@ -116,23 +124,32 @@ class MicStream:
         return self.proc.stdout.read(n)
 
 
+FOLLOW_UP_TRIGGER = os.path.join(WAKE_DIR, "follow_up")
+
+
 def listen_once(rec, stream):
-    """Block until wake word detected. Returns True if detected."""
+    """Block until wake word detected OR follow_up trigger received."""
     while True:
         if os.path.exists(DISABLED):
             time.sleep(1.0)
             continue
+        if os.path.exists(FOLLOW_UP_TRIGGER):
+            try:
+                os.unlink(FOLLOW_UP_TRIGGER)
+            except OSError:
+                pass
+            return "follow_up"
         data = stream.read(4000)  # 0.125 s of audio
         if len(data) == 0:
             raise SystemExit("mic stream ended")
         if rec.AcceptWaveform(data):
             res = json.loads(rec.Result())
             if wake_hit(res.get("text", "")):
-                return True
+                return "wake_word"
 
 
-def follow_up(rec2, stream):
-    """After the wake word: wait for the utterance, VAD-ish silence stop."""
+def follow_up(rec2, stream, initial_timeout=INITIAL_TIMEOUT):
+    """After the wake word or follow-up: wait for the utterance, VAD-ish silence stop."""
     start = time.time()
     last_voice = time.time()
     spoke = False
@@ -149,11 +166,17 @@ def follow_up(rec2, stream):
             spoke = True
         if spoke and time.time() - last_voice > SILENCE:
             break
+        # If user hasn't spoken yet and initial timeout elapsed, cancel quietly
+        if not spoke and (time.time() - start > initial_timeout):
+            break
         if vox_state() == "idle":
             # push-to-talk stop or external stop happened
             break
         time.sleep(0.03)
-    stop_recording()
+    if spoke:
+        stop_recording()
+    else:
+        cancel_recording()
 
 
 def main():
@@ -178,15 +201,22 @@ def main():
             continue
         rec = vosk.KaldiRecognizer(model, SAMPLE_RATE, GRAMMAR)
         try:
-            if listen_once(rec, proc.stdout):
-                if not settings_flag("enabled"):
-                    continue
+            mode = listen_once(rec, proc.stdout)
+            if not settings_flag("enabled"):
+                continue
+            if mode == "follow_up":
+                log("conversational follow-up triggered (continuous listening)")
+                start_recording()
+                time.sleep(0.3)
+                # Wait up to 8.0s for user to speak
+                follow_up(rec, proc.stdout, initial_timeout=INITIAL_TIMEOUT)
+            elif mode == "wake_word":
                 log("wake word detected")
                 notify("Listening — speak your request")
                 start_recording()
                 # small delay so voxtype capture is live before follow-up VAD
                 time.sleep(0.4)
-                follow_up(rec, proc.stdout)
+                follow_up(rec, proc.stdout, initial_timeout=INITIAL_TIMEOUT)
         except SystemExit:
             raise
         except Exception as e:

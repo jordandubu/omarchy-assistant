@@ -5,8 +5,8 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-# Language must match settings.json "language" (en, fr, de, it, es, pt)
-ExecStart=%h/.local/share/assistant-tts-pocket/bin/pocket-tts serve --port 8765 --language en
+# Language: english, french_24l, german_24l, italian, spanish, portuguese
+ExecStart=%h/.local/share/assistant-tts-pocket/bin/pocket-tts serve --port 8765 --language english
 Restart=on-failure
 RestartSec=5
 

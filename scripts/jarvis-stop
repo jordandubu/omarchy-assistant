@@ -1,4 +1,47 @@
 #!/bin/bash
-tmux kill-session -t jarvis 2>/dev/null
-echo "[stopped by user]" >> "$HOME/Work/jarvis-answers/live.log" 2>/dev/null
-omarchy-notification-send "Jarvis: stopped"
+# Emergency Stop: immediately halt all audio, recording, agent brains, and follow-ups.
+
+# 1. Kill any active TTS downloads and audio playback immediately
+pkill -9 -f "curl.*8765" 2>/dev/null
+pkill -9 -f "curl.*http://localhost:8765/tts" 2>/dev/null
+pkill -9 -f "pw-play.*/tmp/jarvis" 2>/dev/null
+pkill -9 -f "piper.*jarvis" 2>/dev/null
+pkill -9 -f "espeak" 2>/dev/null
+
+# 2. Kill background brain launcher and all jarvis-worker process trees
+pkill -9 -f "jarvis-brain" 2>/dev/null
+
+PIDS=$(pgrep -f "jarvis-worker" 2>/dev/null)
+for p in $PIDS; do
+  pkill -9 -P "$p" 2>/dev/null
+  kill -9 "$p" 2>/dev/null
+done
+
+# Kill any agent session processes (e.g. omp or node tied to jarvis-session)
+pkill -9 -f "jarvis-session" 2>/dev/null
+
+# Terminate tmux jarvis session and pane children
+if tmux has-session -t jarvis 2>/dev/null; then
+  for ppid in $(tmux list-panes -t jarvis -F "#{pane_pid}" 2>/dev/null); do
+    pkill -9 -P "$ppid" 2>/dev/null
+    kill -9 "$ppid" 2>/dev/null
+  done
+  tmux kill-session -t jarvis 2>/dev/null
+fi
+
+# 3. Cancel active recording and remove follow-up trigger
+rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/jarvis-wake/follow_up" 2>/dev/null
+voxtype record cancel 2>/dev/null
+
+# 4. Mark live.log as stopped
+ANS_DIR="$HOME/Work/jarvis-answers"
+mkdir -p "$ANS_DIR"
+echo "[stopped by user]" >> "$ANS_DIR/live.log" 2>/dev/null
+
+# 5. Visual notification
+omarchy-notification-send -r 424242 -t 3000 "Assistant: stopped"
+
+# 6. Spoken confirmation (one-shot, no follow-up trigger)
+S="$HOME/.config/omarchy-assistant/settings.json"
+VOICE=$(python3 -c "import json;print(json.load(open('$S'))['tts']['voice'])" 2>/dev/null || echo george)
+curl -s -m 2 -X POST http://localhost:8765/tts -F "text=Stopped." -F "voice_url=$VOICE" -o /tmp/jarvis-stop.wav 2>/dev/null && pw-play /tmp/jarvis-stop.wav 2>/dev/null

@@ -16,6 +16,7 @@ Panel {
   // State mirrored from the bar widget (injected hostWidget)
   readonly property string state: hostWidget ? hostWidget.state : "idle"
   readonly property string activity: hostWidget ? hostWidget.activity : ""
+  readonly property var agents: hostWidget ? (hostWidget.agents || []) : []
 
   // Settings (loaded via scripts/settings.sh)
   property string brain: "omp"
@@ -42,7 +43,7 @@ Panel {
   readonly property var settingRows: [
     {
       label: "Brain",
-      options: ["omp", "opencode", "claude", "codex", "gemini", "cursor-agent", "crush"],
+      options: ["omp", "agy", "opencode", "claude", "codex", "gemini", "cursor-agent", "crush"],
       value: brain,
       apply: function(v) { setSetting("brain", v) }
     },
@@ -192,6 +193,16 @@ Panel {
   }
 
   Process {
+    id: stopProcess
+    running: false
+  }
+
+  function stopAgent() {
+    stopProcess.command = [root.scriptDir + "jarvis-stop"]
+    stopProcess.running = true
+  }
+
+  Process {
     id: setupCheckProcess
     running: false
     stdout: StdioCollector {
@@ -336,6 +347,97 @@ Panel {
             color: root.dim
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
+          }
+        }
+
+        // ---------- Active Agents (shown when agents are running) ----------
+        Column {
+          visible: !root.needsSetup && (root.agents.length > 0 || root.state === "thinking")
+          width: parent.width
+          spacing: Style.space(6)
+
+          PanelSectionHeader {
+            text: "Agents Working (" + (root.agents.length > 0 ? root.agents.length : 1) + ")"
+          }
+
+          Repeater {
+            model: root.agents.length > 0 ? root.agents : [{
+              name: "Assistant Brain",
+              prompt: "Working on task…",
+              step: root.activity || "Thinking…"
+            }]
+
+            delegate: Rectangle {
+              required property int index
+              required property var modelData
+              width: parent.width
+              implicitHeight: agentCol.implicitHeight + Style.space(16)
+              color: Qt.rgba(1, 1, 1, 0.05)
+              radius: Style.cornerRadius
+              border.width: 1
+              border.color: Color.accent
+
+              Column {
+                id: agentCol
+                anchors.fill: parent
+                anchors.margins: Style.space(8)
+                spacing: Style.space(6)
+
+                Row {
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Text {
+                    text: "●"
+                    color: Color.accent
+                    font.pixelSize: Style.font.body
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    text: modelData.name || "Agent"
+                    color: Color.accent
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Item {
+                    width: parent.width - (parent.spacing * 3) - Style.space(110)
+                    height: 1
+                  }
+
+                  Button {
+                    text: "Stop"
+                    width: Style.space(56)
+                    anchors.verticalCenter: parent.verticalCenter
+                    onClicked: root.stopAgent()
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  visible: (modelData.prompt || "").length > 0
+                  text: modelData.prompt || ""
+                  color: Color.popups.text
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  wrapMode: Text.WordWrap
+                  maximumLineCount: 2
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  text: modelData.step || "Working…"
+                  color: root.dim
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                  maximumLineCount: 3
+                  elide: Text.ElideRight
+                }
+              }
+            }
           }
         }
 

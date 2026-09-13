@@ -14,19 +14,22 @@ install -m 755 "$REPO/scripts/jarvis-worker" "$HOME/.local/bin/jarvis-worker"
 install -m 755 "$REPO/scripts/jarvis-stop"   "$HOME/.local/bin/jarvis-stop"
 install -m 755 "$REPO/scripts/jarvis-router" "$HOME/.local/bin/jarvis-router"
 install -m 755 "$REPO/scripts/jarvis-wake"   "$HOME/.local/bin/jarvis-wake"
+install -m 755 "$REPO/scripts/jarvis-monitor" "$HOME/.local/bin/jarvis-monitor"
+ln -sf "$HOME/.local/bin/jarvis-monitor" "$HOME/.local/bin/omarchy-assistant-monitor"
 # voice-router passthrough for dictation profile compatibility
 install -m 755 "$REPO/scripts/voice-router"  "$HOME/.local/bin/voice-router"
 
 # 2) voxtype assistant profile (merge if missing)
 VT="$HOME/.config/voxtype/config.toml"
 if [[ -f "$VT" ]] && ! grep -q "profiles.assistant" "$VT"; then
-  cat >> "$VT" <<'PROF'
+  cat >> "$VT" <<EOF
 
 # AI Assistant profile: routes to jarvis-router
 [profiles.assistant]
 post_process_command = "$HOME/.local/bin/jarvis-router"
 output_mode = "clipboard"
-PROF
+fallback_on_empty = false
+EOF
 fi
 
 # 3) Settings + personas defaults (never overwrite existing)
@@ -86,12 +89,29 @@ if [[ $WITH_TTS -eq 1 && -f "$REPO/config/omarchy-assistant-tts.service" ]]; the
   systemctl --user enable --now omarchy-assistant-tts.service
 fi
 
-echo "Assistant installed. Hold SUPER+A and speak (press SUPER+SHIFT+A is omarchy audio, avoid)."
-echo "Keybinding to add (SUPER+A push-to-talk):"
-cat <<'KEY'
+# Reload voxtype daemon so it picks up the assistant profile
+if systemctl --user is-active voxtype.service >/dev/null 2>&1; then
+  systemctl --user restart voxtype.service
+fi
 
+# 5) Hyprland keybindings (merge if missing)
+HB="$HOME/.config/hypr/bindings.lua"
+if [[ -f "$HB" ]]; then
+  if ! grep -q "SUPER + A.*assistant" "$HB"; then
+    cat >> "$HB" <<'KEY'
+
+-- AI Assistant push-to-talk (hold SUPER + A, speak, release)
 o.bind("SUPER + A", "Start assistant (push-to-talk)", "voxtype record start --profile assistant")
 o.bind("SUPER + A", "Stop assistant (push-to-talk)", "voxtype record stop", { release = true })
-
 KEY
-echo "Add those to ~/.config/hypr/bindings.lua if not present, then reload."
+  fi
+  if ! grep -q "SUPER + I.*jarvis-monitor" "$HB"; then
+    cat >> "$HB" <<'KEY'
+
+-- AI Assistant agent monitor (watch live agent or interrupt with Ctrl+C)
+o.bind("SUPER + I", "Watch assistant agent", "jarvis-monitor")
+KEY
+  fi
+fi
+
+echo "Assistant installed. Hold SUPER+A and speak. Press SUPER+I to watch running agents."

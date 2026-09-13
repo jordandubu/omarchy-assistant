@@ -48,6 +48,7 @@ BarWidget {
   property string state: "idle"
   property string activity: ""
   property string setup: "ok"
+  property var agents: []
 
   readonly property color faceColor: {
     if (setup !== "ok") return Color.urgent
@@ -94,6 +95,7 @@ BarWidget {
           root.state = s.state || "idle"
           root.activity = s.activity || ""
           root.setup = s.setup || "ok"
+          root.agents = s.agents || []
         } catch (e) {}
       }
     }

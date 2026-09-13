@@ -1,12 +1,37 @@
 #!/usr/bin/env python3
 """Jarvis assistant router (F10). Whitelist commands instantly; else brain."""
-import datetime, json, os, re, subprocess, sys
+import ast, datetime, json, math, operator, os, re, shutil, subprocess, sys, time
 
-text = sys.stdin.read().strip()
+if len(sys.argv) > 1:
+    text = " ".join(sys.argv[1:]).strip()
+else:
+    text = sys.stdin.read().strip()
 if not text:
     sys.exit(0)
+
 t = re.sub(r"\s+", " ", text.lower()).strip().rstrip(".,!?")
-t = re.sub(r"^(hey |ok |okay )", "", t)
+while True:
+    cleaned = re.sub(r"^(?:hey|ok|okay|omarchy|jarvis)[,\s]+", "", t).strip()
+    if cleaned == t:
+        break
+    t = cleaned
+t = t.rstrip(".,!?").strip()
+
+def record_history(user_text, assistant_reply):
+    try:
+        mem_file = os.path.expanduser("~/.local/share/omarchy-assistant/rolling-memory.json")
+        os.makedirs(os.path.dirname(mem_file), exist_ok=True)
+        now = time.time()
+        history = []
+        if os.path.exists(mem_file):
+            try:
+                history = [item for item in json.load(open(mem_file)) if now - item.get("t", 0) <= 300]
+            except Exception:
+                history = []
+        history.append({"t": now, "user": user_text, "assistant": assistant_reply})
+        json.dump(history, open(mem_file, "w"), indent=2)
+    except Exception:
+        pass
 
 def launch(*cmd):
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -16,7 +41,7 @@ def notify(msg):
     subprocess.Popen(["omarchy-notification-send", msg],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-def speak(msg):
+def speak(msg, followup=False):
     safe = msg.replace('"', "'")
     try:
         s = json.load(open(os.path.expanduser(
@@ -24,9 +49,23 @@ def speak(msg):
         voice = s.get("tts", {}).get("voice", "george")
     except Exception:
         voice = "george"
-    subprocess.Popen(["bash", "-c",
-        f'curl -s -m 30 -X POST http://localhost:8765/tts -F "text={safe}" '
-        f'-F "voice_url={voice}" -o /tmp/jarvis-speak.wav && pw-play /tmp/jarvis-speak.wav'],
+
+    wake_dir = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"), "jarvis-wake")
+    trigger_flag = os.path.join(wake_dir, "follow_up")
+    touch_cmd = f'mkdir -p "{wake_dir}" && touch "{trigger_flag}"' if followup else ':'
+
+    cmd = (
+        f'if curl -s -m 3 -X POST http://localhost:8765/tts -F "text={safe}" '
+        f'-F "voice_url={voice}" -o /tmp/jarvis-speak.wav 2>/dev/null; then '
+        f'  pw-play /tmp/jarvis-speak.wav 2>/dev/null; '
+        f'elif command -v espeak-ng >/dev/null 2>&1; then '
+        f'  espeak-ng "{safe}" 2>/dev/null; '
+        f'elif command -v espeak >/dev/null 2>&1; then '
+        f'  espeak "{safe}" 2>/dev/null; '
+        f'fi; '
+        f'{touch_cmd}'
+    )
+    subprocess.Popen(["bash", "-c", cmd],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 APPS = {
@@ -40,20 +79,462 @@ APPS = {
 NUMWORDS = {"one": 1, "two": 2, "three": 3, "five": 5, "ten": 10, "fifteen": 15,
             "twenty": 20, "thirty": 30, "sixty": 60, "an": 60, "a": 1}
 
+MATH_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+ALLOWED_MATH_FUNCS = {
+    'sqrt': math.sqrt,
+    'cbrt': getattr(math, 'cbrt', lambda x: x ** (1/3)),
+    'abs': abs,
+    'round': round,
+    'sin': math.sin,
+    'cos': math.cos,
+    'tan': math.tan,
+    'log': math.log,
+    'log10': math.log10,
+    'exp': math.exp,
+}
+
+ALLOWED_MATH_NAMES = {
+    'pi': math.pi,
+    'e': math.e,
+}
+
+WORD_NUMS = {
+    # English
+    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+    'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,
+    'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19,
+    'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50,
+    'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90,
+    # French
+    'zéro': 0, 'un': 1, 'une': 1, 'deux': 2, 'trois': 3, 'quatre': 4, 'cinq': 5,
+    'sept': 7, 'huit': 8, 'neuf': 9, 'dix': 10,
+    'onze': 11, 'douze': 12, 'treize': 13, 'quatorze': 14, 'quinze': 15, 'seize': 16,
+    'vingt': 20, 'trente': 30, 'quarante': 40, 'cinquante': 50, 'soixante': 60,
+}
+
+MULT_WORDS = {
+    'hundred': 100, 'cent': 100, 'cents': 100,
+    'thousand': 1000, 'mille': 1000,
+    'million': 1000000, 'millions': 1000000,
+    'billion': 1000000000, 'milliard': 1000000000,
+}
+
+def safe_eval_ast(node):
+    if isinstance(node, ast.Expression):
+        return safe_eval_ast(node.body)
+    elif isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float)):
+            return node.value
+        raise ValueError('Unsupported constant')
+    elif isinstance(node, ast.BinOp):
+        op_type = type(node.op)
+        if op_type not in MATH_OPERATORS:
+            raise ValueError(f'Unsupported binary op {op_type}')
+        left = safe_eval_ast(node.left)
+        right = safe_eval_ast(node.right)
+        if op_type == ast.Pow:
+            if right > 1000 or (abs(left) > 100 and right > 10):
+                raise OverflowError('Exponent too large')
+        return MATH_OPERATORS[op_type](left, right)
+    elif isinstance(node, ast.UnaryOp):
+        op_type = type(node.op)
+        if op_type not in MATH_OPERATORS:
+            raise ValueError(f'Unsupported unary op {op_type}')
+        operand = safe_eval_ast(node.operand)
+        return MATH_OPERATORS[op_type](operand)
+    elif isinstance(node, ast.Name):
+        if node.id in ALLOWED_MATH_NAMES:
+            return ALLOWED_MATH_NAMES[node.id]
+        raise ValueError(f'Unknown name {node.id}')
+    elif isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id in ALLOWED_MATH_FUNCS:
+            func = ALLOWED_MATH_FUNCS[node.func.id]
+            args = [safe_eval_ast(arg) for arg in node.args]
+            return func(*args)
+        raise ValueError('Unsupported function call')
+    raise ValueError(f'Unsupported AST node {type(node)}')
+
+def words_to_numbers(text):
+    text = text.replace('-', ' ')
+    tokens = text.split()
+    out = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in WORD_NUMS or tok in MULT_WORDS or (tok.isdigit() and i + 1 < len(tokens) and tokens[i+1] in MULT_WORDS):
+            val = 0
+            curr = 0
+            matched = False
+            while i < len(tokens):
+                t = tokens[i]
+                if t in WORD_NUMS:
+                    curr += WORD_NUMS[t]
+                    matched = True
+                    i += 1
+                elif t.isdigit():
+                    curr += int(t)
+                    matched = True
+                    i += 1
+                elif t in ('hundred', 'cent', 'cents'):
+                    curr = (curr if curr else 1) * 100
+                    matched = True
+                    i += 1
+                elif t in ('thousand', 'mille'):
+                    val += (curr if curr else 1) * 1000
+                    curr = 0
+                    matched = True
+                    i += 1
+                elif t in ('million', 'millions'):
+                    val += (curr if curr else 1) * 1000000
+                    curr = 0
+                    matched = True
+                    i += 1
+                elif t in ('billion', 'milliard'):
+                    val += (curr if curr else 1) * 1000000000
+                    curr = 0
+                    matched = True
+                    i += 1
+                elif t in ('and', 'et') and curr > 0 and i + 1 < len(tokens) and tokens[i+1] in WORD_NUMS:
+                    i += 1
+                else:
+                    break
+            if matched:
+                val += curr
+                out.append(str(val))
+            else:
+                out.append(tok)
+                i += 1
+        else:
+            out.append(tok)
+            i += 1
+    return ' '.join(out)
+
+def try_solve_math(text):
+    s = text.strip().lower().rstrip('.,!?')
+
+    # Guard against matching system commands or non-math actions
+    if re.search(r'\b(time|date|weather|window|app|terminal|screen|screenshot|lock|reboot|shutdown|restart|reminder)\b', s):
+        return None
+
+    # Check if query is in French
+    is_fr = bool(re.search(r'\b(combien|calcule|calculer|fois|divis[eé]|racine|carr[eé]|pour\s*cent)\b', s))
+
+    # Strip conversational prefixes
+    clean = re.sub(r'^(?:what(?:\'s| is| are)|how much is|calculate|compute|solve|evaluate|math|tell me)\s+', '', s).strip()
+    clean = re.sub(r'^(?:combien (?:font|fait)|calcule|calculer|donne-moi le r[eé]sultat de|r[eé]sultat de)\s+', '', clean).strip()
+    clean = re.sub(r'^(?:the\s+)?result of\s+', '', clean).strip()
+    clean = re.sub(r'\b(?:please|s\'il te pla[iî]t|stp)\b', '', clean).strip()
+
+    # Convert spoken numbers to digits
+    num_str = words_to_numbers(clean)
+
+    # Fractions / multipliers: 'half of 50', 'double 25', 'triple 15'
+    m_half = re.match(r'^(?:half of|moiti[eé] de)\s+([0-9\.]+)$', num_str)
+    if m_half:
+        n = float(m_half.group(1))
+        val = int(n / 2) if (n / 2).is_integer() else round(n / 2, 4)
+        if is_fr:
+            return f'La moitié de {m_half.group(1)} = {val}', f'La moitié de {m_half.group(1)} est {val}.'
+        return f'Half of {m_half.group(1)} = {val}', f'Half of {m_half.group(1)} is {val}.'
+
+    m_dbl = re.match(r'^(?:double|twice|le double de)\s+([0-9\.]+)$', num_str)
+    if m_dbl:
+        n = float(m_dbl.group(1))
+        val = int(n * 2) if (n * 2).is_integer() else round(n * 2, 4)
+        if is_fr:
+            return f'Le double de {m_dbl.group(1)} = {val}', f'Le double de {m_dbl.group(1)} est {val}.'
+        return f'Double {m_dbl.group(1)} = {val}', f'Double {m_dbl.group(1)} is {val}.'
+
+    m_tpl = re.match(r'^(?:triple|le triple de)\s+([0-9\.]+)$', num_str)
+    if m_tpl:
+        n = float(m_tpl.group(1))
+        val = int(n * 3) if (n * 3).is_integer() else round(n * 3, 4)
+        if is_fr:
+            return f'Le triple de {m_tpl.group(1)} = {val}', f'Le triple de {m_tpl.group(1)} est {val}.'
+        return f'Triple {m_tpl.group(1)} = {val}', f'Triple {m_tpl.group(1)} is {val}.'
+
+    # Percentage: X percent of Y / X % de Y
+    m_pct = re.search(r'([0-9\.]+)\s*(?:%|percent|pour\s*cent)\s+(?:of|de)\s+([0-9\.]+)', num_str)
+    if m_pct:
+        p, base = float(m_pct.group(1)), float(m_pct.group(2))
+        res = (p / 100.0) * base
+        val = int(res) if res.is_integer() else round(res, 4)
+        p_str = str(int(p)) if p.is_integer() else str(p)
+        b_str = str(int(base)) if base.is_integer() else str(base)
+        if is_fr:
+            return f'{p_str}% de {b_str} = {val}', f'{p_str} pour cent de {b_str} font {val}.'
+        return f'{p_str}% of {b_str} = {val}', f'{p_str} percent of {b_str} is {val}.'
+
+    # Square root / Cube root
+    m_sqrt = re.search(r'\b(?:the\s+)?(?:square root of|square root|sqrt of|sqrt|racine carr[eé]e de)\s+([0-9\.]+)', num_str)
+    if m_sqrt:
+        x = float(m_sqrt.group(1))
+        if x < 0:
+            return f'√{m_sqrt.group(1)} = Error', 'Cannot take square root of a negative number.'
+        res = math.sqrt(x)
+        val = int(res) if res.is_integer() else round(res, 4)
+        x_str = str(int(x)) if x.is_integer() else str(x)
+        if is_fr:
+            return f'√{x_str} = {val}', f'La racine carrée de {x_str} est {val}.'
+        return f'√{x_str} = {val}', f'The square root of {x_str} is {val}.'
+
+    # Spoken operation conversions
+    m = re.match(r'^add\s+([0-9\.]+)\s+(?:and|to)\s+([0-9\.]+)$', num_str)
+    if m:
+        num_str = f'{m.group(1)} + {m.group(2)}'
+    m = re.match(r'^multiply\s+([0-9\.]+)\s+(?:by|and)\s+([0-9\.]+)$', num_str)
+    if m:
+        num_str = f'{m.group(1)} * {m.group(2)}'
+    m = re.match(r'^divide\s+([0-9\.]+)\s+by\s+([0-9\.]+)$', num_str)
+    if m:
+        num_str = f'{m.group(1)} / {m.group(2)}'
+    m = re.match(r'^subtract\s+([0-9\.]+)\s+from\s+([0-9\.]+)$', num_str)
+    if m:
+        num_str = f'{m.group(2)} - {m.group(1)}'
+
+    # Powers
+    num_str = re.sub(r'([0-9\.]+)\s+(?:squared|au carr[eé])\b', r'\1 ** 2', num_str)
+    num_str = re.sub(r'([0-9\.]+)\s+(?:cubed|au cube)\b', r'\1 ** 3', num_str)
+    num_str = re.sub(r'\s+(?:raised to the power of|to the power of|raised to|to the power|power of|\xe0 la puissance|puissance)\s+', r' ** ', num_str)
+    num_str = num_str.replace('^', ' ** ')
+
+    # Basic operators
+    num_str = re.sub(r'\bplus\b', '+', num_str)
+    num_str = re.sub(r'\b(?:minus|moins)\b', '-', num_str)
+    num_str = re.sub(r'\b(?:times|multiplied by|fois|multipli[eé] par)\b', '*', num_str)
+    num_str = re.sub(r'\b(?:divided by|divis[eé] par)\b', '/', num_str)
+    num_str = re.sub(r'(?<=\d)\s+(?:over|sur)\s+(?=\d)', '/', num_str)
+    num_str = re.sub(r'\bmod(?:ulo)?\b', '%', num_str)
+    num_str = re.sub(r'(?<=\d)\s*x\s*(?=\d)', '*', num_str)
+
+    # Must have digits or allowed constants
+    if not re.search(r'\d', num_str) and not any(k in num_str for k in ALLOWED_MATH_NAMES):
+        return None
+
+    # Check for unauthorized words / tokens
+    words = re.findall(r'[a-zA-Z_]\w*', num_str)
+    allowed_words = set(ALLOWED_MATH_FUNCS.keys()) | set(ALLOWED_MATH_NAMES.keys())
+    if any(w not in allowed_words for w in words):
+        return None
+
+    # Must have an operator or math function
+    has_op = any(c in num_str for c in '+-*/%*') or bool(words)
+    if not has_op:
+        return None
+
+    try:
+        tree = ast.parse(num_str, mode='eval')
+        raw_val = safe_eval_ast(tree)
+    except ZeroDivisionError:
+        if is_fr:
+            return 'Division par zéro = Indéfini', 'La division par zéro est impossible.'
+        return 'Division by zero = Undefined', 'Division by zero is undefined.'
+    except OverflowError:
+        if is_fr:
+            return 'Dépassement = Trop grand', 'Le résultat est trop grand pour être calculé.'
+        return 'Overflow = Too large', 'The result is too large to calculate.'
+    except Exception:
+        return None
+
+    # Format numeric value
+    if isinstance(raw_val, float):
+        if raw_val.is_integer() and abs(raw_val) < 1e12:
+            val = int(raw_val)
+            val_str = str(val)
+            spoken_val = str(val)
+        else:
+            is_approx = (raw_val != round(raw_val, 4))
+            rounded = round(raw_val, 4)
+            val_str = f'{rounded:.4f}'.rstrip('0').rstrip('.')
+            if is_approx:
+                spoken_val = f'environ {val_str}' if is_fr else f'approximately {val_str}'
+            else:
+                spoken_val = val_str
+            val = rounded
+    else:
+        val = raw_val
+        val_str = str(val)
+        spoken_val = str(val)
+
+    # Clean display expression
+    disp_expr = num_str.replace('**', '^')
+
+    # Spoken phrasing for simple binary ops: 'A op B'
+    m_bin = re.match(r'^([0-9\.]+)\s*([\+\-\*\/%^])\s*([0-9\.]+)$', disp_expr.strip())
+    if m_bin:
+        a, op_sym, b = m_bin.group(1), m_bin.group(2), m_bin.group(3)
+        if op_sym == '^' and b == '2' and ('squared' in clean or 'carré' in clean):
+            spoken = f'{a} au carré est {spoken_val}.' if is_fr else f'{a} squared is {spoken_val}.'
+        elif op_sym == '^' and b == '3' and ('cubed' in clean or 'cube' in clean):
+            spoken = f'{a} au cube est {spoken_val}.' if is_fr else f'{a} cubed is {spoken_val}.'
+        elif is_fr:
+            op_fr = {'+': 'plus', '-': 'moins', '*': 'fois', '/': 'divisé par', '%': 'modulo', '^': 'puissance'}
+            spoken = f'{a} {op_fr.get(op_sym, op_sym)} {b} font {spoken_val}.'
+        else:
+            op_en = {'+': 'plus', '-': 'minus', '*': 'times', '/': 'divided by', '%': 'modulo', '^': 'to the power of'}
+            spoken = f'{a} {op_en.get(op_sym, op_sym)} {b} is {spoken_val}.'
+        return f'{a} {op_sym} {b} = {val_str}', spoken
+
+    if is_fr:
+        spoken = f'Le résultat est {spoken_val}.'
+    else:
+        spoken = f'The answer is {spoken_val}.'
+    return f'{disp_expr} = {val_str}', spoken
+
+def get_system_stats():
+    total_gb = 0.0
+    used_gb = 0.0
+    ram_pct = 0
+    try:
+        with open('/proc/meminfo') as f:
+            info = {}
+            for line in f:
+                parts = line.split(':')
+                if len(parts) == 2:
+                    info[parts[0].strip()] = int(parts[1].split()[0])
+            total_kb = info.get('MemTotal', 0)
+            avail_kb = info.get('MemAvailable', 0)
+            used_kb = total_kb - avail_kb
+            total_gb = round(total_kb / (1024 * 1024), 1)
+            used_gb = round(used_kb / (1024 * 1024), 1)
+            ram_pct = int(round((used_kb / total_kb) * 100)) if total_kb else 0
+    except Exception:
+        pass
+
+    cpu_pct = 0
+    load1 = 0.0
+    cores = os.cpu_count() or 1
+    try:
+        def read_cpu():
+            with open('/proc/stat') as f:
+                fields = [float(x) for x in f.readline().split()[1:]]
+                return fields[3] + fields[4], sum(fields)
+        idle1, total1 = read_cpu()
+        time.sleep(0.08)
+        idle2, total2 = read_cpu()
+        idle_delta = idle2 - idle1
+        total_delta = total2 - total1
+        cpu_pct = int(round(100.0 * (1.0 - idle_delta / total_delta))) if total_delta > 0 else 0
+        load1 = round(os.getloadavg()[0], 1)
+    except Exception:
+        pass
+
+    gpu_util = None
+    vram_used_gb = None
+    vram_total_gb = None
+    try:
+        out = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'],
+            text=True, timeout=0.5
+        ).strip()
+        parts = [int(p.strip()) for p in out.split(',')]
+        gpu_util = parts[0]
+        vram_used_gb = round(parts[1] / 1024.0, 1)
+        vram_total_gb = round(parts[2] / 1024.0, 1)
+    except Exception:
+        pass
+
+    return {
+        'ram_pct': ram_pct,
+        'used_gb': used_gb,
+        'total_gb': total_gb,
+        'cpu_pct': cpu_pct,
+        'load1': load1,
+        'cores': cores,
+        'gpu_util': gpu_util,
+        'vram_used_gb': vram_used_gb,
+        'vram_total_gb': vram_total_gb,
+    }
+
+def try_system_status(sub_t):
+    s = sub_t.lower().strip().rstrip('.,!?')
+
+    try:
+        cfg = json.load(open(os.path.expanduser('~/.config/omarchy-assistant/settings.json')))
+        lang = cfg.get('language', 'en')
+    except Exception:
+        lang = 'en'
+    is_fr = (lang == 'fr') or bool(re.search(r'\b(état|processeur|mémoire|système|ressources)\b', s))
+
+    is_gpu = bool(re.search(r'\b(gpu|vram|graphics card|carte graphique)\b', s))
+    is_ram = bool(re.search(r'\b(ram|memory|mémoire)\b', s))
+    is_cpu = bool(re.search(r'\b(cpu|processor|processeur)\b', s))
+    is_general = bool(re.search(r'\b(system status|system resources?|system load|resource usage|performance|system health|how is the system|how\'s the system|how the system|état du système|ressources système)\b', s)) or ('system' in s and any(w in s for w in ('status', 'stats', 'usage', 'load', 'health', 'running')))
+
+    # Match target
+    if (is_ram and is_cpu) or is_general or (('ram' in s or 'cpu' in s) and any(w in s for w in ('taking', 'using', 'usage', 'load')) and is_ram and is_cpu):
+        target = 'all'
+    elif is_gpu:
+        target = 'gpu'
+    elif is_ram and any(w in s for w in ('how much', 'usage', 'free', 'used', 'taking', 'check', 'what is', 'what\'s', 'utilisation', 'combien')):
+        target = 'ram'
+    elif is_cpu and any(w in s for w in ('how much', 'usage', 'load', 'taking', 'check', 'what is', 'what\'s', 'utilisation', 'combien')):
+        target = 'cpu'
+    elif is_ram and is_cpu:
+        target = 'all'
+    elif is_general:
+        target = 'all'
+    else:
+        return None
+
+    stats = get_system_stats()
+
+    if target == 'ram':
+        disp = f"RAM: {stats['used_gb']} / {stats['total_gb']} GB ({stats['ram_pct']}%)"
+        if is_fr:
+            spoken = f"La mémoire vive est à {stats['ram_pct']} pour cent, avec {stats['used_gb']} gigaoctets utilisés sur {stats['total_gb']}."
+        else:
+            spoken = f"RAM usage is at {stats['ram_pct']} percent, with {stats['used_gb']} gigabytes used out of {stats['total_gb']}."
+        return disp, spoken
+
+    if target == 'cpu':
+        disp = f"CPU: {stats['cpu_pct']}% | Load: {stats['load1']} ({stats['cores']} cores)"
+        if is_fr:
+            spoken = f"Le processeur est à {stats['cpu_pct']} pour cent avec une charge moyenne de {stats['load1']}."
+        else:
+            spoken = f"CPU usage is at {stats['cpu_pct']} percent with a load average of {stats['load1']}."
+        return disp, spoken
+
+    if target == 'gpu' and stats['gpu_util'] is not None:
+        disp = f"GPU: {stats['gpu_util']}% | VRAM: {stats['vram_used_gb']} / {stats['vram_total_gb']} GB"
+        if is_fr:
+            spoken = f"La carte graphique est à {stats['gpu_util']} pour cent avec {stats['vram_used_gb']} gigaoctets de mémoire vidéo utilisés."
+        else:
+            spoken = f"GPU usage is at {stats['gpu_util']} percent with {stats['vram_used_gb']} gigabytes of VRAM used."
+        return disp, spoken
+
+    gpu_part = f" | GPU: {stats['gpu_util']}%" if stats['gpu_util'] is not None else ''
+    disp = f"CPU: {stats['cpu_pct']}% | RAM: {stats['used_gb']}/{stats['total_gb']} GB ({stats['ram_pct']}%){gpu_part}"
+    if is_fr:
+        spoken = f"Le processeur est à {stats['cpu_pct']} pour cent, et la mémoire vive est à {stats['ram_pct']} pour cent avec {stats['used_gb']} gigaoctets utilisés."
+    else:
+        spoken = f"CPU is at {stats['cpu_pct']} percent, and RAM is at {stats['ram_pct']} percent with {stats['used_gb']} gigabytes used."
+    return disp, spoken
+
 def parse_reminder(t):
     """Return (minutes, message) or None."""
     if not t.startswith("remind me"):
         return None
     t = t.replace("remind me ", "", 1).strip()
     unit_re = r"(hours?|hrs?|h|minutes?|mins?|m)"
-    # trailing time: "... check the oven in 10 minutes"
     m = re.search(r"\bin (\d+|" + "|".join(NUMWORDS) + r") ?(hours?|hrs?|h|minutes?|mins?|m)\b\s*(.*)$", t)
     if m:
         n = NUMWORDS.get(m.group(1), m.group(1))
         mins = int(n) * (60 if m.group(2).startswith(("hour", "hr", "h")) else 1)
         msg = m.group(3).strip()
         return mins, msg
-    # leading time: "in 5 minutes to check the oven"
     m = re.match(r"^in (\d+|" + "|".join(NUMWORDS) + r") ?(hours?|hrs?|h|minutes?|mins?|m)\b\s*(?:to |that )?(.*)$", t)
     if m:
         n = NUMWORDS.get(m.group(1))
@@ -63,80 +544,268 @@ def parse_reminder(t):
         return mins, m.group(3).strip()
     return None
 
-matched = False
-m = re.match(r"^(?:open|launch|run|start) (.+)$", t)
-if m:
-    target = m.group(1).strip()
-    if target in APPS:
-        launch(APPS[target])
-        notify(f"Opening {target}")
-        matched = True
-elif re.match(r"^volume (up|down|mute|unmute)", t) or t == "mute":
-    if "up" in t: cmd = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"]
-    elif "down" in t: cmd = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
-    else: cmd = ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
-    launch(*cmd)
-    notify("Volume " + ("up" if "up" in t else "down" if "down" in t else "toggled"))
-    matched = True
-elif re.match(r"^record (my |the )?screen( with webcam| and webcam)?", t) or t == "screen recording":
-    if "webcam" in t:
-        launch("omarchy-capture-screenrecording-with-webcam")
-        notify("Screen recording with webcam")
-        speak("Recording screen with webcam.")
-    else:
-        launch("omarchy-capture-screenrecording")
-        notify("Screen recording started")
-        speak("Recording your screen.")
-    matched = True
-elif re.match(r"^(stop|end|finish) (the )?(screen )?recording$", t):
-    launch("pkill", "-INT", "-f", "gpu-screen-recorder")
-    notify("Recording stopped")
-    speak("Recording stopped.")
-    matched = True
-elif t.startswith("screenshot"):
-    launch("omarchy-screenshot")
-    notify("Screenshot")
-    matched = True
-elif re.match(r"^lock( (the|my)? ?(screen|pc|computer)?)?$", t):
-    launch("omarchy-system-lock")
-    matched = True
-elif t.startswith("close") and ("window" in t or "app" in t):
-    launch("hyprctl", "dispatch", "closewindow", "active")
-    matched = True
-elif re.match(r"^what('s| is)?( the)? ?time", t) or t == "time":
-    now = datetime.datetime.now()
-    msg = now.strftime("%H:%M")
-    notify(msg)
-    speak(f"It is {now:%I:%M %p}.")
-    matched = True
-elif re.match(r"^what('s| is)?( the |today'?s? )?date", t) or t == "date" or t.startswith("what day"):
-    now = datetime.datetime.now()
-    msg = now.strftime("%A %d %B %Y")
-    notify(msg)
-    speak(f"Today is {now:%A, %B %d}.")
-    matched = True
-elif re.match(r"^(reboot|restart the computer|restart)$", t):
-    launch("omarchy-system-reboot")
-    matched = True
-elif re.match(r"^(shut ?down|power ?off)$", t):
-    launch("omarchy-system-shutdown")
-    matched = True
-elif parse_reminder(t):
-    mins, msg = parse_reminder(t)
-    if msg:
-        launch("omarchy", "reminder", str(mins), msg)
-        notify(f"Reminder in {mins} min: {msg}")
-        speak(f"Okay, reminding you in {mins} minute{'s' if mins != 1 else ''}.")
-    else:
-        # no message: notify-only reminder
-        launch("omarchy", "reminder", str(mins))
-        notify(f"Reminder in {mins} min")
-        speak(f"Reminder set for {mins} minutes from now.")
-    matched = True
+def execute_single_action(sub_t, full_original_text):
+    """
+    Attempts to match and execute an instant command.
+    Returns: (matched: bool, speak_reply: str or None)
+    """
+    if sub_t in ("stop", "cancel", "abort", "shut up", "be quiet", "stop talking", "halt") or re.match(r"^stop (it|everything|talking|what you are doing|the agent|agent)$", sub_t):
+        subprocess.run([os.path.expanduser("~/.local/bin/jarvis-stop")])
+        return True, None
 
-# Whitelisted commands are consumed here; brain handles anything else (detached)
-if not matched:
-    subprocess.Popen([os.path.expanduser("~/.local/bin/jarvis-brain"), text],
-                     start_new_session=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    m = re.match(r"^(?:open|launch|run|start) (.+)$", sub_t)
+    if m:
+        target = re.sub(r"^(the|a|an)\s+", "", m.group(1).strip())
+        if target in APPS:
+            launch(APPS[target])
+            notify(f"Opening {target}")
+            return True, f"Opening {target}."
+        if shutil.which(target):
+            launch(target)
+            notify(f"Opening {target}")
+            return True, f"Opening {target}."
+
+    if re.match(r"^(?:volume (?:up|down|mute|unmute)|mute(?: the)?(?: volume)?|unmute(?: the)?(?: volume)?)$", sub_t) or sub_t == "mute":
+        if "up" in sub_t: cmd = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"]
+        elif "down" in sub_t: cmd = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
+        else: cmd = ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
+        launch(*cmd)
+        act = "Volume " + ("up" if "up" in sub_t else "down" if "down" in sub_t else "muted")
+        notify(act)
+        return True, act + "."
+
+    if re.match(r"^record (my |the )?screen( with webcam| and webcam)?", sub_t) or sub_t == "screen recording":
+        if "webcam" in sub_t:
+            launch("omarchy-capture-screenrecording-with-webcam")
+            notify("Screen recording with webcam")
+            return True, "Recording screen with webcam."
+        else:
+            launch("omarchy-capture-screenrecording")
+            notify("Screen recording started")
+            return True, "Recording your screen."
+
+    if re.match(r"^(stop|end|finish) (the )?(screen )?recording$", sub_t):
+        launch("pkill", "-INT", "-f", "gpu-screen-recorder")
+        notify("Recording stopped")
+        return True, "Recording stopped."
+
+    if sub_t.startswith("screenshot") or "take a screenshot" in sub_t:
+        launch("omarchy-screenshot")
+        notify("Screenshot taken")
+        return True, "Screenshot taken."
+
+    if re.match(r"^lock( (the|my)? ?(screen|pc|computer)?)?$", sub_t):
+        launch("omarchy-system-lock")
+        notify("System locked")
+        return True, "System locked."
+
+    if sub_t.startswith("close") and ("window" in sub_t or "app" in sub_t):
+        launch("hyprctl", "dispatch", "closewindow", "active")
+        notify("Closed window")
+        return True, "Closed active window."
+
+    if re.match(r"^what('s| is)?( the)? ?time", sub_t) or sub_t == "time":
+        now = datetime.datetime.now()
+        notify(now.strftime("%H:%M"))
+        return True, f"It is {now:%I:%M %p}."
+
+    if re.match(r"^what('s| is)?( the |today'?s? )?date", sub_t) or sub_t == "date" or sub_t.startswith("what day"):
+        now = datetime.datetime.now()
+        notify(now.strftime("%A %d %B %Y"))
+        return True, f"Today is {now:%A, %B %d}."
+
+    if re.search(r"\bweather\b", sub_t):
+        import urllib.request
+        try:
+            req = urllib.request.Request("https://wttr.in/?format=j1", headers={"User-Agent": "curl/7.68.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                cur = data["current_condition"][0]
+                area = data["nearest_area"][0]["areaName"][0]["value"]
+                desc = cur["weatherDesc"][0]["value"]
+                temp = cur["temp_C"]
+                feels = cur["FeelsLikeC"]
+                msg = f"{desc}, {temp}°C (feels like {feels}°C)"
+                notify(f"Weather in {area}: {msg}")
+                return True, f"In {area}, it is {desc} and {temp} degrees Celsius."
+        except Exception:
+            return False, None
+
+    math_res = try_solve_math(sub_t)
+    if math_res:
+        display_str, spoken_str = math_res
+        notify(display_str)
+        return True, spoken_str
+
+    sys_res = try_system_status(sub_t)
+    if sys_res:
+        display_str, spoken_str = sys_res
+        notify(display_str)
+        return True, spoken_str
+
+    if re.match(r"^(reboot|restart the computer|restart)$", sub_t):
+        launch("omarchy-system-reboot")
+        return True, "Restarting system."
+
+    if re.match(r"^(shut ?down|power ?off)$", sub_t):
+        launch("omarchy-system-shutdown")
+        return True, "Shutting down system."
+
+    rem = parse_reminder(sub_t)
+    if rem:
+        mins, msg = rem
+        if msg:
+            launch("omarchy", "reminder", str(mins), msg)
+            notify(f"Reminder in {mins} min: {msg}")
+            return True, f"Okay, reminding you in {mins} minute{'s' if mins != 1 else ''}."
+        else:
+            launch("omarchy", "reminder", str(mins))
+            notify(f"Reminder in {mins} min")
+            return True, f"Reminder set for {mins} minutes from now."
+
+    if re.match(r"^what did (i|you) just (ask|say)", sub_t) or re.match(r"^repeat (that|what you said)", sub_t) or sub_t in ("say again", "say that again", "what did i say", "what was my last question"):
+        ans = ""
+        try:
+            mem_file = os.path.expanduser("~/.local/share/omarchy-assistant/rolling-memory.json")
+            if os.path.exists(mem_file):
+                history = json.load(open(mem_file))
+                if history:
+                    last = history[-1]
+                    if "say" in sub_t and "i" not in sub_t:
+                        ans = f"I said: {last.get('assistant', '')}"
+                    else:
+                        ans = f"You asked: '{last.get('user', '')}', and I answered: '{last.get('assistant', '')}'"
+        except Exception:
+            pass
+        if not ans:
+            ans = "I don't have any recent conversation in memory yet."
+        notify(ans)
+        return True, ans
+
+    if re.match(r"^(hello|hi|hey|good morning|good afternoon|good evening)\b", sub_t):
+        ans = "Hello! What can I do for you?"
+        notify(ans)
+        return True, ans
+
+    if re.match(r"^how are you( doing)?", sub_t):
+        ans = "I'm doing great, running smoothly on your Omarchy desktop! How can I help?"
+        notify(ans)
+        return True, ans
+
+    if re.match(r"^(what'?s up|whats up|sup)\b", sub_t):
+        ans = "Not much, just here and ready to help! What's on your mind?"
+        notify(ans)
+        return True, ans
+
+    if re.match(r"^(who|what) are you", sub_t) or sub_t == "what can you do":
+        ans = "I am your Omarchy AI desktop assistant. I can open apps, check the weather, adjust system settings, and execute multi-step actions."
+        notify(ans)
+        return True, ans
+
+    if re.match(r"^(thank you|thanks)", sub_t):
+        ans = "You're very welcome!"
+        notify(ans)
+        return True, ans
+
+    if re.match(r"^(tell me a )?joke", sub_t):
+        import random
+        jokes = [
+            "Why do programmers prefer dark mode? Because light attracts bugs.",
+            "There are 10 types of people in the world: those who understand binary, and those who don't.",
+            "Why did the developer go broke? Because they used up all their cache.",
+            "A SQL query walks into a bar, walks up to two tables and asks: Can I join you?",
+        ]
+        ans = random.choice(jokes)
+        notify(ans)
+        return True, ans
+
+    return False, None
+
+# 0. Emergency Stop check (e.g. "stop", "cancel", "shut up", "omarchy stop")
+STOP_PATTERN = r"^(?:stop(?:\s+it|\s+everything|\s+talking|\s+what you(?:'re| are) doing|\s+(?:the\s+)?agent)?|cancel|abort|shut\s*up|be\s*quiet|stop\s*talking|halt|kill)$"
+if re.match(STOP_PATTERN, t):
+    subprocess.run([os.path.expanduser("~/.local/bin/jarvis-stop")])
+    record_history(text, "Stopped.")
+    sys.exit(0)
+
+# 0b. Check for dismiss phrases (answering "no" / "nothing" / "all good" to follow-up)
+DISMISS_PATTERN = r"^(?:no\b.*|nope\b.*|nah\b.*|nothing\b.*|that'?s (?:all|it)|all good|i'?m good|never ?mind|good for now)$"
+if re.match(DISMISS_PATTERN, t):
+    import random
+    closings = [
+        "Alright. Let me know if you need anything!",
+        "Understood. Have a great day!",
+        "All right, I'm here if you need me.",
+        "Got it. Have a good one!"
+    ]
+    ans = random.choice(closings)
+    notify(ans)
+    speak(ans, followup=False)
+    record_history(text, ans)
+    sys.exit(0)
+
+# 1. Check for Terminal Combo (e.g. "open the terminal then launch cmatrix")
+m_term = re.match(r"^(?:open|launch|start)(?: the)? terminal (?:and then|then|and)(?: launch| run| execute)? (.+)$", t)
+if m_term:
+    target_cmd = m_term.group(1).strip()
+    first_word = target_cmd.split()[0]
+    # Launch foot and run the command inside it; stay open with bash
+    foot_script = (
+        f"if command -v {first_word} >/dev/null 2>&1; then "
+        f"  {target_cmd}; "
+        f"else "
+        f"  echo '{first_word} is not installed. Use pacman or your package manager to install it.'; "
+        f"fi; "
+        f"exec bash"
+    )
+    launch("foot", "-H", "sh", "-c", foot_script)
+    msg = f"Opening terminal and launching {target_cmd}. Is there anything else I can do for you?"
+    notify(f"Terminal: {target_cmd}")
+    speak(msg, followup=True)
+    record_history(text, msg)
+    sys.exit(0)
+
+# 2. Check for Multi-Action Chaining (e.g. "open firefox then check the weather")
+actions = re.split(r"\b(?:and then|then|after that|afterwards)\b|;|, then", t)
+actions = [a.strip() for a in actions if a.strip()]
+if len(actions) > 1:
+    spoken_replies = []
+    for idx, act in enumerate(actions):
+        if idx > 0:
+            time.sleep(0.4)  # Give the desktop a moment between sequential actions
+        matched, reply = execute_single_action(act, text)
+        if matched:
+            if reply:
+                spoken_replies.append(reply)
+        else:
+            # Dispatch unhandled sub-action to the brain
+            subprocess.Popen([os.path.expanduser("~/.local/bin/jarvis-brain"), act],
+                             start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if spoken_replies:
+        combined = " ".join(spoken_replies)
+        if not any(f in combined.lower() for f in ("anything else", "can i help", "more i can do")):
+            if not combined.endswith((".", "!", "?")):
+                combined += "."
+            combined += " Is there anything else I can do for you?"
+        speak(combined, followup=True)
+        record_history(text, combined)
+    sys.exit(0)
+
+# 3. Single Action Fast-Path
+matched, reply = execute_single_action(t, text)
+if matched:
+    if reply:
+        if not any(f in reply.lower() for f in ("anything else", "can i help", "more i can do", "welcome", "what can i do")):
+            if not reply.endswith((".", "!", "?")):
+                reply += "."
+            reply += " Is there anything else I can do for you?"
+        speak(reply, followup=True)
+        record_history(text, reply)
+    sys.exit(0)
+
+# 4. Fallback: Brain handles general/complex requests (detached)
+subprocess.Popen([os.path.expanduser("~/.local/bin/jarvis-brain"), text],
+                 start_new_session=True,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 sys.exit(0)

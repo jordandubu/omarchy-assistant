@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Omarchy Assistant — Live Agent Monitor (SUPER+I)
+# Watches the active agent in real-time, displays step progression,
+# and allows interrupting/stopping the agent with Ctrl+C.
+
+set -u
+
+# 1. If monitor window is already open, toggle it closed
+WINDOW_ADDR=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class == "org.omarchy.assistant-monitor" or .initialClass == "org.omarchy.assistant-monitor" or .title == "Omarchy Assistant — Live Agent Monitor") | .address' | head -n 1)
+
+if [ -n "$WINDOW_ADDR" ] && [ "$WINDOW_ADDR" != "null" ]; then
+  hyprctl dispatch closewindow "address:$WINDOW_ADDR" >/dev/null 2>&1
+  exit 0
+fi
+
+ANS_DIR="$HOME/Work/jarvis-answers"
+mkdir -p "$ANS_DIR"
+
+# 2. Check if an agent is currently running
+if tmux has-session -t jarvis 2>/dev/null && pgrep -f "jarvis-worker" >/dev/null 2>&1; then
+  exec foot \
+    --app-id=TUI.float \
+    --title="Omarchy Assistant — Live Agent Monitor" \
+    --window-size-chars=100x30 \
+    bash -c '
+      # Print header with instructions
+      echo -e "\033[1;36m┌────────────────────────────────────────────────────────────┐\033[0m"
+      echo -e "\033[1;36m│\033[0m \033[1;37mOmarchy Assistant — Live Agent Execution\033[0m                   \033[1;36m│\033[0m"
+      echo -e "\033[1;36m│\033[0m \033[1;31m[Ctrl+C]\033[0m \033[0;37mStop agent immediately\033[0m                            \033[1;36m│\033[0m"
+      echo -e "\033[1;36m│\033[0m \033[1;32m[Ctrl+B D]\033[0m \033[0;37mDetach & keep agent running in background\033[0m        \033[1;36m│\033[0m"
+      echo -e "\033[1;36m└────────────────────────────────────────────────────────────┘\033[0m\n"
+      tmux attach -t jarvis
+    '
+else
+  # 3. No agent currently working: show recent activity and last answer
+  exec foot \
+    --app-id=TUI.float \
+    --title="Omarchy Assistant — Live Agent Monitor" \
+    --window-size-chars=100x30 \
+    bash -c '
+      echo -e "\033[1;36m┌────────────────────────────────────────────────────────────┐\033[0m"
+      echo -e "\033[1;36m│\033[0m \033[1;37mOmarchy Assistant — Agent Status\033[0m                           \033[1;36m│\033[0m"
+      echo -e "\033[1;36m│\033[0m \033[0;90mNo agent is actively working right now.\033[0m                    \033[1;36m│\033[0m"
+      echo -e "\033[1;36m└────────────────────────────────────────────────────────────┘\033[0m\n"
+
+      PROMPT_FILE="$HOME/Work/jarvis-answers/prompt.txt"
+      LIVE_FILE="$HOME/Work/jarvis-answers/live.log"
+      ANSWER_FILE="$HOME/Work/jarvis-answers/answer.txt"
+
+      if [ -f "$PROMPT_FILE" ] && [ -s "$PROMPT_FILE" ]; then
+        echo -e "\033[1;34m▸ Last Task:\033[0m $(cat "$PROMPT_FILE")\n"
+      fi
+
+      if [ -f "$LIVE_FILE" ] && [ -s "$LIVE_FILE" ]; then
+        echo -e "\033[1;35m▸ Recent Execution Log:\033[0m"
+        tail -n 18 "$LIVE_FILE"
+        echo ""
+      fi
+
+      if [ -f "$ANSWER_FILE" ] && [ -s "$ANSWER_FILE" ]; then
+        echo -e "\033[1;32m▸ Last Response:\033[0m"
+        cat "$ANSWER_FILE"
+        echo ""
+      fi
+
+      echo -e "\033[0;33m[Q / Esc / Enter] Close window\033[0m"
+      read -r -s -n 1 key
+    '
+fi
