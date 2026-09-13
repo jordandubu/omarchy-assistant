@@ -64,15 +64,6 @@ Panel {
   // Settings table: one row per setting (label + dropdown + apply)
   readonly property var settingRows: [
     {
-      label: "Assistant power",
-      options: ["enabled", "disabled"],
-      value: (root.assistantEnabled && root.state !== "disabled") ? "enabled" : "disabled",
-      apply: function(v) {
-        if (v === "disabled" && root.assistantEnabled) root.toggleEnabled()
-        else if (v === "enabled" && !root.assistantEnabled) root.toggleEnabled()
-      }
-    },
-    {
       label: "Brain",
       options: ["omp", "agy", "opencode", "claude", "codex", "gemini", "cursor-agent", "crush"],
       value: brain,
