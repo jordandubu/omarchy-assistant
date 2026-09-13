@@ -216,9 +216,14 @@ Panel {
     running: false
   }
 
+  readonly property string scriptDir: {
+    var u = Qt.resolvedUrl("scripts/")
+    return u.toString().replace("file://", "")
+  }
+
   function setSetting(key, value) {
     settingsSetProcess.command = [
-      Quickshell.env("HOME") + "/Documents/repo/omarchy-assistant/scripts/settings.sh",
+      scriptDir + "settings.sh",
       "set", key, value
     ]
     settingsSetProcess.running = true
@@ -279,7 +284,7 @@ Panel {
   }
 
   Component.onCompleted: {
-    var sh = Quickshell.env("HOME") + "/Documents/repo/omarchy-assistant/scripts"
+    var sh = root.scriptDir
     historyProcess.command = [
       "bash", "-c",
       "for f in $(ls -t ~/Work/jarvis-answers/*.log 2>/dev/null | head -20); do " +
