@@ -17,9 +17,6 @@ Panel {
   readonly property string state: hostWidget ? hostWidget.state : "idle"
   readonly property string activity: hostWidget ? hostWidget.activity : ""
 
-  property string lastAnswer: ""
-  property var historyLines: []
-
   // Settings (loaded via scripts/settings.sh)
   property string brain: "omp"
   property string personality: "default"
@@ -35,8 +32,6 @@ Panel {
   readonly property bool needsSetup: (hostWidget ? hostWidget.setup : "ok") !== "ok"
     || setupState === "incomplete"
 
-
-  readonly property bool micActive: state === "listening"
   // Theme-derived contrast (same pattern as first-party panels: dim from foreground)
   readonly property color foreground: bar ? bar.barForeground : Color.popups.text
   readonly property color dim: Qt.darker(foreground, 1.45)
@@ -111,8 +106,6 @@ Panel {
   property string wakeWordOn: "on"
 
   function reload() {
-    answerFile.reload()
-    historyProcess.running = true
     settingsGetProcess.running = true
     personasProcess.running = true
     voicesProcess.running = true
@@ -127,37 +120,6 @@ Panel {
 
   function open() { root.controller.show() }
   function close() { root.controller.hide() }
-
-  function stop() {
-    stopProcess.running = true
-  }
-
-  // ------------------------------------------------------------- data
-  FileView {
-    id: answerFile
-    path: Quickshell.env("HOME") + "/Work/jarvis-answers/answer.txt"
-    watchChanges: true
-    printErrors: false
-    onFileChanged: root.lastAnswer = text()
-    onLoaded: root.lastAnswer = text()
-  }
-
-  Process {
-    id: historyProcess
-    running: false
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var lines = []
-        var parts = String(text || "").split("\n")
-        for (var i = 0; i < parts.length; i++) {
-          var line = parts[i].trim()
-          if (line !== "") lines.push(line)
-        }
-        root.historyLines = lines
-      }
-    }
-  }
 
   // Settings IO
   Process {
@@ -230,24 +192,6 @@ Panel {
   }
 
   Process {
-    id: stopProcess
-    running: false
-    command: [Quickshell.env("HOME") + "/.local/bin/jarvis-stop"]
-  }
-
-  Process {
-    id: micProcess
-    running: false
-  }
-
-  function toggleMic() {
-    var verb = root.micActive ? "stop" : "start"
-    micProcess.command = ["voxtype", "record", verb, "--profile", "assistant"]
-    micProcess.running = true
-  }
-
-  // Setup check/run
-  Process {
     id: setupCheckProcess
     running: false
     stdout: StdioCollector {
@@ -285,13 +229,6 @@ Panel {
 
   Component.onCompleted: {
     var sh = root.scriptDir
-    historyProcess.command = [
-      "bash", "-c",
-      "for f in $(ls -t ~/Work/jarvis-answers/*.log 2>/dev/null | head -20); do " +
-      "  head -1 \"$f\" | cut -c1-100; " +
-      "  tail -1 \"$f\" | cut -c1-100; " +
-      "done"
-    ]
     settingsGetProcess.command = ["bash", "-c",
       "sh=" + sh + "/settings.sh; " +
       "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)|$(\"$sh\" get live_activity)|$(\"$sh\" get language)|$(\"$sh\" get wake_word.enabled)\""]
@@ -406,110 +343,6 @@ Panel {
           }
         }
 
-        // ---------- Mic: hero control on tinted card ----------
-        Row {
-          visible: !root.needsSetup
-          width: parent.width
-          spacing: Style.space(10)
-
-          Button {
-            id: micButton
-            width: Style.space(44)
-            height: Style.space(44)
-            text: root.micActive ? "◼" : "◻"
-            fontSize: Style.font.heading
-            tooltipText: root.micActive ? "Stop" : "Voice request"
-            active: root.micActive
-            onClicked: root.toggleMic()
-          }
-
-          Column {
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
-
-            Text {
-              text: {
-                if (root.state === "listening") return "listening…"
-                if (root.state === "thinking") return "working on it…"
-                if (root.state === "speaking") return "speaking…"
-                return "say \"omarchy\" or hold SUPER+A"
-              }
-              color: root.state === "listening" ? root.urgent : Color.popups.text
-              font.pixelSize: Style.font.body
-            }
-
-            Text {
-              // Show what was heard while working: strip "[HH:MM:SS] prompt: " prefix
-              property string heard: {
-                var a = root.activity || ""
-                var i = a.indexOf("prompt: ")
-                return i >= 0 ? a.substring(i + 8) : a
-              }
-              text: root.state === "thinking" ? ("heard: " + (root.heard || ""))
-                    : ""
-              visible: text !== "" && !(root.state === "thinking" && root.heard === "")
-              color: root.state === "thinking" ? root.foreground : root.foreground
-              opacity: root.state === "thinking" ? 1.0 : 0.75
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideMiddle
-            }
-          }
-        }
-
-        // ---------- Activity banner ----------
-        Text {
-          visible: !root.needsSetup && root.activity !== "" && root.liveActivity !== "off"
-          text: root.activity
-          color: root.dim
-          font.family: "monospace"
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideMiddle
-        }
-
-        // ---------- Answer ----------
-        Column {
-          width: parent.width
-          spacing: Style.space(4)
-          visible: !root.needsSetup && root.lastAnswer !== ""
-
-          PanelSectionHeader {
-            text: "Answer"
-          }
-
-          Text {
-            width: parent.width
-            text: root.lastAnswer
-            color: Color.popups.text
-            font.pixelSize: Style.font.body
-            wrapMode: Text.WordWrap
-          }
-        }
-
-        // ---------- Recent ----------
-        Column {
-          width: parent.width
-          spacing: Style.space(3)
-          visible: !root.needsSetup && root.historyLines.length > 0
-
-          PanelSectionHeader {
-            text: "Recent"
-          }
-
-          Repeater {
-            model: root.historyLines.length > 3 ? 3 : root.historyLines.length
-
-            Text {
-              required property int index
-              width: parent.width
-              text: "· " + (root.historyLines[index] || "")
-              color: root.dim
-              font.family: "monospace"
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideMiddle
-            }
-          }
-        }
-
         // ---------- Settings: rows on a tinted card ----------
         Column {
           visible: !root.needsSetup
@@ -547,14 +380,6 @@ Panel {
               }
             }
           }
-        }
-
-        // ---------- Stop banner (while working) ----------
-        Button {
-          width: parent.width
-          text: "Stop assistant"
-          visible: root.state === "thinking"
-          onClicked: root.stop()
         }
       }
     }
