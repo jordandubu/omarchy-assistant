@@ -347,14 +347,7 @@ Panel {
               height: Style.font.display
 
               Text {
-                anchors.centerIn: parent
-                text: {
-                  if (root.state === "thinking") return "⋯"
-                  if (root.state === "speaking") return "\uDB80\uDF6C"   // mic
-                  if (root.state === "listening") return "\uDB80\uDF6D"
-                  return "\u2726"
-                }
-                color: root.state === "listening" ? root.urgent : Color.popups.text
+                text: "◼"
                 font.family: "monospace"
                 font.pixelSize: Style.font.display
               }
@@ -423,7 +416,7 @@ Panel {
             id: micButton
             width: Style.space(44)
             height: Style.space(44)
-            text: root.micActive ? "󰍭" : "󰍬"
+            text: root.micActive ? "◼" : "◻"
             fontSize: Style.font.heading
             tooltipText: root.micActive ? "Stop & send" : "Start voice request"
             active: root.micActive

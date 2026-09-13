@@ -48,27 +48,9 @@ BarWidget {
   property string state: "idle"
   property string activity: ""
   property string setup: "ok"
-  property int frame: 0
 
-  // Kaomoji faces per state — winks, blinks, glances; never two round dots
-  readonly property string face: {
-    if (setup !== "ok") return "(x_x)"   // needs setup
-    if (state === "thinking") {
-      // eyes glance side to side while thinking
-      var spin = ["◕ᴗ●", "●ᴗ◕", "◕ᴗ◕", "●ᴗ◕"]
-      return "(" + spin[frame % 4] + ")"
-    }
-    if (state === "listening") return (frame % 2 === 0) ? "✧(◕ᴗ◕)" : "(◕ᴗ◕)"
-    if (state === "speaking") return (frame % 2 === 0) ? "(◕ᴗ◕)" : "(◕ᴗ◕)"   // mouth animates in panel
-    // idle: blink + occasional wink + glance
-    var f = frame % 14
-    if (f === 9) return "(˘ᴗ˘)"                       // blink — both eyes closed
-    if (f === 11) return "(◕ᴗ^)ノ"                     // WINK right eye
-    if (f === 4) return "(^ᴗ◕)"                        // WINK left eye
-    if (f === 6) return "(◕ᴗ●)"                        // glance right
-    if (f === 12) return "(●ᴗ◕)"                       // glance left
-    return "(◕ᴗ◕)"
-  }
+  // Plain cube; color carries the state
+  readonly property string face: "◼"
 
   readonly property color faceColor: {
     if (setup !== "ok") return Color.urgent
@@ -95,26 +77,7 @@ BarWidget {
     running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: {
-      root.frame++
-      statusProcess.running = true
-    }
-  }
-
-  Process {
-    id: statusProcess
-    running: false
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try {
-          var s = JSON.parse(text.trim())
-          root.state = s.state || "idle"
-          root.activity = s.activity || ""
-          root.setup = s.setup || "ok"
-        } catch (e) { }
-      }
-    }
+    onTriggered: statusProcess.running = true
   }
 
   Component.onCompleted: {
