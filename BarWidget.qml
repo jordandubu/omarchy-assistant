@@ -87,6 +87,21 @@ BarWidget {
     ]
   }
 
+  Process {
+    id: statusProcess
+    running: false
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          var s = JSON.parse(text.trim())
+          root.state = s.state || "idle"
+          root.activity = s.activity || ""
+          root.setup = s.setup || "ok"
+        } catch (e) {}
+      }
+    }
+  }
+
   WidgetButton {
     id: button
     anchors.fill: parent
