@@ -47,10 +47,12 @@ BarWidget {
   // ------------------------------------------------------------- state
   property string state: "idle"
   property string activity: ""
+  property string setup: "ok"
   property int frame: 0
 
   // Kaomoji faces per state — winks, blinks, glances; never two round dots
   readonly property string face: {
+    if (setup !== "ok") return "(x_x)"   // needs setup
     if (state === "thinking") {
       // eyes glance side to side while thinking
       var spin = ["◕ᴗ●", "●ᴗ◕", "◕ᴗ◕", "●ᴗ◕"]
@@ -69,6 +71,7 @@ BarWidget {
   }
 
   readonly property color faceColor: {
+    if (setup !== "ok") return Color.urgent
     if (state === "thinking") return Color.accent
     if (state === "listening") return Color.urgent
     if (state === "speaking") return Color.accent
@@ -108,6 +111,7 @@ BarWidget {
           var s = JSON.parse(text.trim())
           root.state = s.state || "idle"
           root.activity = s.activity || ""
+          root.setup = s.setup || "ok"
         } catch (e) { }
       }
     }
@@ -125,8 +129,9 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.face
-    tooltipText: root.activity !== "" ? root.activity : "AI Assistant"
     fontFamily: "monospace"
+    tooltipText: root.setup !== "ok" ? "Assistant needs setup — click to configure"
+      : root.activity !== "" ? root.activity : "AI Assistant"
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
     }

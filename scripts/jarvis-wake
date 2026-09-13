@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Jarvis wake-word listener.
+
+Runs continuously (systemd user service). Listens to the default mic with a
+vosk keyword grammar; on hearing the wake word starts a voxtype assistant
+recording and stops it when speech ends (VAD-detected silence) or the
+safety cap elapses. Push-to-talk (SUPER+A) still works at any time.
+
+Requires: python-vosk, model at ~/.local/share/omarchy-assistant/vosk-model,
+  pw-record (pipewire) or arecord, and the running voxtype daemon.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+MODEL_DIR = os.path.join(HOME, ".local/share/omarchy-assistant/vosk-model")
+STATE_FILE = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"), "voxtype/state")
+SETTINGS = os.path.join(HOME, ".config/omarchy-assistant/settings.json")
+RT = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+WAKE_DIR = os.path.join(RT, "jarvis-wake")
+DISABLED = os.path.join(WAKE_DIR, "disabled")
+MAX_SPEECH = 30.0       # hard cap on a wake-word-triggered utterance (seconds)
+SILENCE = 1.2           # seconds of trailing silence that ends the utterance
+SAMPLE_RATE = 16000
+
+# "omarchy" is not in vosk's vocabulary; use its near-homophones ("oh-mar*")
+# as the keyword family. Any of them counts as the wake word.
+GRAMMAR = json.dumps([
+    "oh marky", "oh markey", "oh mackey", "oh mackie", "oh marcy",
+    "oh marquee", "oh marco", "oh marty", "oh marcus", "oh marquis",
+    "oh market", "oh my arch", "oh my car", "oh mar", "omar", "oh mark",
+    "[unk]",
+])
+KEYWORDS = {
+    "marky", "markey", "mackey", "mackie", "marcy", "marquee", "marco",
+    "marty", "marcus", "marquis", "market", "marcia", "mar", "omar",
+    "mark", "march",
+}
+
+
+def wake_hit(text):
+    return bool(KEYWORDS & set(text.split()))
+
+import vosk
+
+
+def log(msg):
+    print(f"[jarvis-wake] {msg}", flush=True)
+
+
+def vox_state():
+    try:
+        with open(STATE_FILE) as f:
+            return f.read().strip()
+    except OSError:
+        return "idle"
+
+
+def start_recording():
+    subprocess.Popen(
+        ["voxtype", "record", "start", "--profile", "assistant", "--no-osd"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+
+
+def stop_recording():
+    subprocess.Popen(
+        ["voxtype", "record", "stop"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+
+
+def settings_flag(name, default=True):
+    try:
+        with open(SETTINGS) as f:
+            return json.load(f).get("wake_word", {}).get(name, default)
+    except (OSError, ValueError):
+        return default
+
+
+def notify(msg):
+    subprocess.Popen(["omarchy-notification-send", msg],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+class MicStream:
+    """Continuous 16 kHz mono s16le frames from the default source."""
+
+    def __init__(self):
+        self.proc = None
+        self.backend = None
+        self.cmd = None
+        if shutil.which("pw-record"):
+            self.cmd = ["pw-record", "--format", "s16", "--rate", str(SAMPLE_RATE),
+                        "--channels", "1", "-"]
+            self.backend = "pw-record"
+        elif shutil.which("arecord"):
+            self.cmd = ["arecord", "-q", "-f", "S16_LE", "-r", str(SAMPLE_RATE),
+                        "-c", "1", "-t", "raw"]
+            self.backend = "arecord"
+        else:
+            raise SystemExit("no recorder found: need pw-record (pipewire) or arecord")
+
+    def start(self):
+        self.proc = subprocess.Popen(self.cmd, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL)
+        log(f"capturing via {self.backend} pid {self.proc.pid}")
+        return self.proc
+
+    def read(self, n):
+        return self.proc.stdout.read(n)
+
+
+def listen_once(rec, stream):
+    """Block until wake word detected. Returns True if detected."""
+    while True:
+        if os.path.exists(DISABLED):
+            time.sleep(1.0)
+            continue
+        data = stream.read(4000)  # 0.125 s of audio
+        if len(data) == 0:
+            raise SystemExit("mic stream ended")
+        if rec.AcceptWaveform(data):
+            res = json.loads(rec.Result())
+            if wake_hit(res.get("text", "")):
+                return True
+
+
+def follow_up(rec2, stream):
+    """After the wake word: wait for the utterance, VAD-ish silence stop."""
+    start = time.time()
+    last_voice = time.time()
+    spoke = False
+    while time.time() - start < MAX_SPEECH:
+        data = stream.read(4000)
+        if len(data) == 0:
+            break
+        # crude energy VAD: rms over 16-bit samples
+        rms = (sum(abs(int.from_bytes(data[i:i+2], "little", signed=True))
+                   for i in range(0, len(data), 8)) /
+               max(1, len(data) // 8))
+        if rms > 300:
+            last_voice = time.time()
+            spoke = True
+        if spoke and time.time() - last_voice > SILENCE:
+            break
+        if vox_state() == "idle":
+            # push-to-talk stop or external stop happened
+            break
+        time.sleep(0.03)
+    stop_recording()
+
+
+def main():
+    os.makedirs(WAKE_DIR, exist_ok=True)
+    if not os.path.isdir(MODEL_DIR):
+        notify("Jarvis wake word: vosk model missing — run scripts/install.sh")
+        sys.exit(1)
+
+    vosk.SetLogLevel(-1)
+    model = vosk.Model(MODEL_DIR)
+    log("vosk model loaded")
+    stream = MicStream()
+    proc = stream.start()
+
+    while True:
+        if os.path.exists(DISABLED):
+            time.sleep(1.0)
+            continue
+        if vox_state() == "recording":
+            # user already recording (push-to-talk); don't interfere
+            time.sleep(0.2)
+            continue
+        rec = vosk.KaldiRecognizer(model, SAMPLE_RATE, GRAMMAR)
+        try:
+            if listen_once(rec, proc.stdout):
+                if not settings_flag("enabled"):
+                    continue
+                log("wake word detected")
+                notify("Listening — speak your request")
+                start_recording()
+                # small delay so voxtype capture is live before follow-up VAD
+                time.sleep(0.4)
+                follow_up(rec, proc.stdout)
+        except SystemExit:
+            raise
+        except Exception as e:
+            log(f"error: {e}; restarting mic")
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            time.sleep(2.0)
+            proc = stream.start()
+
+
+if __name__ == "__main__":
+    main()

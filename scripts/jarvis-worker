@@ -8,12 +8,16 @@ PROMPT="$1"; SP="$2"; LIVE="$3"; DONE="$4"; BRAIN="${5:-omp}"
 S="$HOME/.config/omarchy-assistant/settings.json"
 TTS_BACKEND=$(python3 -c "import json;print(json.load(open('$S'))['tts']['backend'])" 2>/dev/null || echo kyutai)
 TTS_VOICE=$(python3 -c "import json;print(json.load(open('$S'))['tts']['voice'])" 2>/dev/null || echo george)
+LANG_CODE=$(python3 -c "import json;print(json.load(open('$S')).get('language','en'))" 2>/dev/null || echo en)
+JARVIS_LANGUAGE="$LANG_CODE" python3 - "$PROMPT" "$SP" "$LIVE" "$DONE" "$BRAIN" <<'PYEOF'
 
-python3 - "$PROMPT" "$SP" "$LIVE" "$DONE" "$BRAIN" <<'PYEOF'
-import datetime, json, subprocess, sys
+import datetime, json, os, subprocess, sys
 
 prompt, sp_path, live_path, done_path, brain = sys.argv[1:6]
 sp = open(sp_path).read()
+if lang_env := os.environ.get("JARVIS_LANGUAGE"):
+    sp = sp.replace("Always reply in English, no exceptions.",
+                    f"Always reply in {lang_env}, no exceptions.")
 
 def log(msg):
     print(msg, flush=True)            # pane (stdout = tmux pty)

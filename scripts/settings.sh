@@ -7,7 +7,8 @@
 set -u
 CFG="$HOME/.config/omarchy-assistant/settings.json"
 mkdir -p "$(dirname "$CFG")"
-[ -f "$CFG" ] || echo '{"brain":"omp","stt_engine":"parakeet","tts":{"backend":"kyutai","voice":"george","fallback":"piper"},"personality":"default","live_activity":"on"}' > "$CFG"
+CFG_DATA='{"brain":"omp","stt_engine":"parakeet","language":"en","tts":{"backend":"kyutai","voice":"george","fallback":"piper"},"personality":"default","live_activity":"on","wake_word":{"enabled":true}}'
+[ -f "$CFG" ] || echo "$CFG_DATA" > "$CFG"
 
 case "${1:-}" in
   get)
@@ -53,18 +54,25 @@ PY
         systemctl --user restart voxtype >/dev/null 2>&1
       ) &
     fi
+    # side effects: language switch restarts the TTS daemon with the new --language
+    if [ "$2" = "language" ]; then
+      systemctl --user restart omarchy-assistant-tts >/dev/null 2>&1 &
+    fi
     ;;
   personas)
     ls "$HOME/.config/omarchy-assistant/personas/" 2>/dev/null | sed 's/\.md$//'
     ;;
   voices)
-    # kyutai stock voices + piper voice
-    echo "george"
-    echo "alba"
-    echo "juergen"
-    echo "estelle"
+    # kyutai voices grouped by the TTS language + piper fallback
+    LANG_CODE=$(python3 -c "import json;print(json.load(open('$CFG')).get('language','en'))" 2>/dev/null || echo en)
+    case "$LANG_CODE" in
+      fr) echo "estelle"; echo "eponine" ;;
+      de) echo "juergen" ;;
+      it) echo "giovanni" ;;
+      es) echo "lola" ;;
+      pt) echo "rafael" ;;
+      *)  echo "george"; echo "alba"; echo "anna"; echo "charles" ;;
+    esac
     echo "piper (alan)"
     ;;
-  *)
-    echo "usage: settings.sh get|set|personas|voices" >&2; exit 1 ;;
 esac

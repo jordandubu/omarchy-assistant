@@ -5,7 +5,8 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/share/assistant-tts-pocket/bin/pocket-tts serve --port 8765
+# Language must match settings.json "language" (en, fr, de, it, es, pt)
+ExecStart=%h/.local/share/assistant-tts-pocket/bin/pocket-tts serve --port 8765 --language en
 Restart=on-failure
 RestartSec=5
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Jarvis assistant router (F10). Whitelist commands instantly; else brain."""
-import datetime, os, re, subprocess, sys
+import datetime, json, os, re, subprocess, sys
 
 text = sys.stdin.read().strip()
 if not text:
@@ -18,9 +18,15 @@ def notify(msg):
 
 def speak(msg):
     safe = msg.replace('"', "'")
+    try:
+        s = json.load(open(os.path.expanduser(
+            "~/.config/omarchy-assistant/settings.json")))
+        voice = s.get("tts", {}).get("voice", "george")
+    except Exception:
+        voice = "george"
     subprocess.Popen(["bash", "-c",
         f'curl -s -m 30 -X POST http://localhost:8765/tts -F "text={safe}" '
-        '-F "voice_url=george" -o /tmp/jarvis-speak.wav && pw-play /tmp/jarvis-speak.wav'],
+        f'-F "voice_url={voice}" -o /tmp/jarvis-speak.wav && pw-play /tmp/jarvis-speak.wav'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 APPS = {

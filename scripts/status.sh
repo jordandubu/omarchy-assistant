@@ -30,4 +30,18 @@ if pgrep -f "pw-play /tmp/jarvis" >/dev/null 2>&1; then
   STATE="speaking"
 fi
 
-printf '{"state":"%s","activity":%s}\n' "$STATE" "$(printf '%s' "$ACTIVITY" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+# Setup incomplete? (cached 10 s to keep the poll cheap)
+SETUP="ok"
+CACHE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-assistant-setup-cache"
+now=$(date +%s)
+cage=$((now - $(stat -c %Y "$CACHE" 2>/dev/null || echo now)))
+if [ -f "$CACHE" ] && [ "$cage" -lt 10 ]; then
+  SETUP="$(cat "$CACHE" 2>/dev/null || echo ok)"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  OUT="$(bash "$SCRIPT_DIR/setup-status.sh" 2>/dev/null || echo '{"setup":"ok"}')"
+  SETUP="$(printf '%s' "$OUT" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("setup","ok"))' 2>/dev/null || echo ok)"
+  echo "$SETUP" > "$CACHE"
+fi
+
+printf '{"state":"%s","setup":"%s","activity":%s}\n' "$STATE" "$SETUP" "$(printf '%s' "$ACTIVITY" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"

@@ -26,8 +26,14 @@ Panel {
   property string sttEngine: "parakeet"
   property string ttsVoice: "george"
   property string liveActivity: "on"
+  property string language: "en"
+  property var setupItems: []
+  property string setupState: "ok"   // ok | incomplete | running
   property var personaOptions: ["default"]
   property var voiceOptions: ["george"]
+
+  readonly property bool needsSetup: (hostWidget ? hostWidget.setup : "ok") !== "ok"
+    || setupState === "incomplete"
 
 
   readonly property bool micActive: state === "listening"
@@ -71,6 +77,30 @@ Panel {
       }
     },
     {
+      label: "Language",
+      options: ["en", "fr", "de", "it", "es", "pt"],
+      value: language,
+      apply: function(v) {
+        language = v
+        setSetting("language", v)
+        // voice must match language; reset to that language's first voice
+        var map = {"en":"george","fr":"estelle","de":"juergen","it":"giovanni","es":"lola","pt":"rafael"}
+        ttsVoice = map[v] || "george"
+        setSetting("tts.voice", ttsVoice)
+        setSetting("tts.backend", "kyutai")
+        voicesProcess.running = true
+      }
+    },
+    {
+      label: "Wake word",
+      options: ["on", "off"],
+      value: wakeWordOn,
+      apply: function(v) {
+        wakeWordOn = v
+        setSetting("wake_word.enabled", v === "on" ? "true" : "false")
+      }
+    },
+    {
       label: "Live activity",
       options: ["on", "off"],
       value: liveActivity,
@@ -78,12 +108,15 @@ Panel {
     }
   ]
 
+  property string wakeWordOn: "on"
+
   function reload() {
     answerFile.reload()
     historyProcess.running = true
     settingsGetProcess.running = true
     personasProcess.running = true
     voicesProcess.running = true
+    setupCheckProcess.running = true
   }
 
   function switchPanel(direction) {
@@ -133,7 +166,7 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        // one line: brain|personality|stt|voice|live
+        // one line: brain|personality|stt|voice|live|lang|wake
         var p = String(text || "").trim().split("|")
         if (p.length >= 4) {
           root.brain = p[0]
@@ -141,6 +174,8 @@ Panel {
           root.sttEngine = p[2]
           root.ttsVoice = p[3]
           if (p.length >= 5) root.liveActivity = p[4]
+          if (p.length >= 6) root.language = p[5]
+          if (p.length >= 7) root.wakeWordOn = p[6]
         }
       }
     }
@@ -206,6 +241,43 @@ Panel {
     micProcess.running = true
   }
 
+  // Setup check/run
+  Process {
+    id: setupCheckProcess
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var s = JSON.parse(text.trim())
+          root.setupItems = s.items || []
+          root.setupState = s.setup || "ok"
+        } catch (e) { root.setupState = "ok"; root.setupItems = [] }
+      }
+    }
+  }
+
+  Process {
+    id: setupRunProcess
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var s = JSON.parse(text.trim())
+          root.setupItems = s.items || []
+          root.setupState = s.setup || "ok"
+        } catch (e) { root.setupState = "ok" }
+      }
+    }
+  }
+
+  function runSetup() {
+    if (setupState === "running") return
+    setupState = "running"
+    setupRunProcess.running = true
+  }
+
   Component.onCompleted: {
     var sh = Quickshell.env("HOME") + "/Documents/repo/omarchy-assistant/scripts"
     historyProcess.command = [
@@ -217,9 +289,15 @@ Panel {
     ]
     settingsGetProcess.command = ["bash", "-c",
       "sh=" + sh + "/settings.sh; " +
-      "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)|$(\"$sh\" get live_activity)\""]
+      "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)|$(\"$sh\" get live_activity)|$(\"$sh\" get language)|$(\"$sh\" get wake_word.enabled)\""]
     personasProcess.command = ["bash", "-c", sh + "/settings.sh personas"]
     voicesProcess.command = ["bash", "-c", sh + "/settings.sh voices"]
+    setupCheckProcess.command = ["bash", "-c",
+      "sh=" + sh + "; rm -f \"$XDG_RUNTIME_DIR/omarchy-assistant-setup-cache\"; " +
+      "\"$sh/setup-status.sh\" 2>/dev/null || echo '{\"setup\":\"ok\",\"items\":[]}'"]
+    setupRunProcess.command = ["bash", "-c",
+      "sh=" + sh + "; \"$sh/install.sh\" >/tmp/omarchy-assistant-setup.log 2>&1; " +
+      "rm -f \"$XDG_RUNTIME_DIR/omarchy-assistant-setup-cache\"; \"$sh/setup-status.sh\" 2>/dev/null"]
   }
 
   // ------------------------------------------------------------- UI
@@ -247,14 +325,16 @@ Panel {
         // ---------- Hero: assistant name + state ----------
         PanelHero {
           width: parent.width
-          title: "Assistant"
+          title: root.needsSetup ? "Assistant — Setup" : "Assistant"
           meta: {
+            if (root.needsSetup && root.setupState === "running") return "setting up…"
+            if (root.needsSetup) return "setup required"
             if (root.state === "thinking") return "working…"
             if (root.state === "listening") return "listening"
             if (root.state === "speaking") return "speaking"
             return "ready"
           }
-          foreground: root.state === "listening" ? root.urgent : Color.popups.text
+          foreground: (root.needsSetup || root.state === "listening") ? root.urgent : Color.popups.text
           fontFamily: root.fontFamily
           iconComponent: Component {
             Item {
@@ -276,9 +356,61 @@ Panel {
             }
           }
         }
+        // ---------- Setup card (shown until setup complete) ----------
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          visible: root.needsSetup
+
+          PanelSectionHeader {
+            text: "Setup"
+          }
+
+          Repeater {
+            model: root.setupItems
+
+            Row {
+              required property int index
+              required property var modelData
+              width: parent.width
+              spacing: Style.space(8)
+
+              Text {
+                text: modelData.ok ? "✓" : "✗"
+                color: modelData.ok ? Color.accent : root.urgent
+                font.pixelSize: Style.font.body
+              }
+
+              Text {
+                width: parent.width - Style.space(20)
+                text: modelData.label
+                color: modelData.ok ? root.dim : Color.popups.text
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+            }
+          }
+
+          Button {
+            width: parent.width
+            text: root.setupState === "running" ? "Setting up…" : "Run setup"
+            enabled: root.setupState !== "running"
+            onClicked: root.runSetup()
+          }
+
+          Text {
+            width: parent.width
+            visible: root.setupState === "running"
+            text: "Installing pipeline, wake-word model and keybindings…"
+            color: root.dim
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+        }
 
         // ---------- Mic: hero control on tinted card ----------
         Row {
+          visible: !root.needsSetup
           width: parent.width
           spacing: Style.space(10)
 
@@ -329,8 +461,7 @@ Panel {
 
         // ---------- Activity banner ----------
         Text {
-          width: parent.width
-          visible: root.activity !== "" && root.liveActivity !== "off"
+          visible: !root.needsSetup && root.activity !== "" && root.liveActivity !== "off"
           text: root.activity
           color: root.dim
           font.family: "monospace"
@@ -342,7 +473,7 @@ Panel {
         Column {
           width: parent.width
           spacing: Style.space(4)
-          visible: root.lastAnswer !== ""
+          visible: !root.needsSetup && root.lastAnswer !== ""
 
           PanelSectionHeader {
             text: "Answer"
@@ -361,7 +492,7 @@ Panel {
         Column {
           width: parent.width
           spacing: Style.space(3)
-          visible: root.historyLines.length > 0
+          visible: !root.needsSetup && root.historyLines.length > 0
 
           PanelSectionHeader {
             text: "Recent"
