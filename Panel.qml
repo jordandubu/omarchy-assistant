@@ -418,7 +418,7 @@ Panel {
             height: Style.space(44)
             text: root.micActive ? "◼" : "◻"
             fontSize: Style.font.heading
-            tooltipText: root.micActive ? "Stop & send" : "Start voice request"
+            tooltipText: root.micActive ? "Stop" : "Voice request"
             active: root.micActive
             onClicked: root.toggleMic()
           }
@@ -429,10 +429,10 @@ Panel {
 
             Text {
               text: {
-                if (root.state === "listening") return "listening — tap again to send"
+                if (root.state === "listening") return "listening…"
                 if (root.state === "thinking") return "working on it…"
                 if (root.state === "speaking") return "speaking…"
-                return "tap to talk"
+                return "say \"omarchy\" or hold SUPER+A"
               }
               color: root.state === "listening" ? root.urgent : Color.popups.text
               font.pixelSize: Style.font.body
@@ -446,7 +446,6 @@ Panel {
                 return i >= 0 ? a.substring(i + 8) : a
               }
               text: root.state === "thinking" ? ("heard: " + (root.heard || ""))
-                    : root.state === "idle" ? "or hold SUPER+A and speak"
                     : ""
               visible: text !== "" && !(root.state === "thinking" && root.heard === "")
               color: root.state === "thinking" ? root.foreground : root.foreground
