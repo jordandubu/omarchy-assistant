@@ -86,7 +86,10 @@ def cancel_recording():
 def settings_flag(name, default=True):
     try:
         with open(SETTINGS) as f:
-            return json.load(f).get("wake_word", {}).get(name, default)
+            d = json.load(f)
+            if not d.get("enabled", True):
+                return False
+            return d.get("wake_word", {}).get(name, default)
     except (OSError, ValueError):
         return default
 
@@ -130,8 +133,8 @@ FOLLOW_UP_TRIGGER = os.path.join(WAKE_DIR, "follow_up")
 def listen_once(rec, stream):
     """Block until wake word detected OR follow_up trigger received."""
     while True:
-        if os.path.exists(DISABLED):
-            time.sleep(1.0)
+        if os.path.exists(DISABLED) or not settings_flag("enabled"):
+            time.sleep(0.5)
             continue
         if os.path.exists(FOLLOW_UP_TRIGGER):
             try:
@@ -192,8 +195,8 @@ def main():
     proc = stream.start()
 
     while True:
-        if os.path.exists(DISABLED):
-            time.sleep(1.0)
+        if os.path.exists(DISABLED) or not settings_flag("enabled"):
+            time.sleep(0.5)
             continue
         if vox_state() == "recording":
             # user already recording (push-to-talk); don't interfere

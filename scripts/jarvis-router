@@ -17,6 +17,25 @@ while True:
     t = cleaned
 t = t.rstrip(".,!?").strip()
 
+def is_assistant_disabled():
+    rt = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    if os.path.exists(os.path.join(rt, "jarvis-wake", "disabled")):
+        return True
+    try:
+        s = json.load(open(os.path.expanduser("~/.config/omarchy-assistant/settings.json")))
+        if not s.get("enabled", True):
+            return True
+    except Exception:
+        pass
+    return False
+
+if is_assistant_disabled():
+    if t in ("enable assistant", "unmute assistant", "turn on assistant", "enable omarchy", "start assistant"):
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        subprocess.run(["bash", os.path.join(script_dir, "settings.sh"), "set-enabled", "true"])
+        sys.exit(0)
+    sys.exit(0)
+
 def record_history(user_text, assistant_reply):
     try:
         mem_file = os.path.expanduser("~/.local/share/omarchy-assistant/rolling-memory.json")

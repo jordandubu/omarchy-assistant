@@ -58,6 +58,9 @@ Item {
 
         readonly property real targetHeight: {
           var h = container.height
+          if (root.state === "disabled") {
+            return bar.width
+          }
           if (root.setup !== "ok") {
             return Math.max(bar.width, h * baseH * 0.65)
           }

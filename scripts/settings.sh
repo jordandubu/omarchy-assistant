@@ -58,6 +58,71 @@ PY
     if [ "$2" = "language" ]; then
       systemctl --user restart omarchy-assistant-tts >/dev/null 2>&1 &
     fi
+    # side effects: wake_word switch stops or starts the wake word listener
+    if [ "$2" = "wake_word.enabled" ]; then
+      if [ "$3" = "false" ]; then
+        systemctl --user stop omarchy-assistant-wake >/dev/null 2>&1 || true
+      else
+        IS_EN=$("$0" is-enabled)
+        if [ "$IS_EN" = "true" ]; then
+          systemctl --user start omarchy-assistant-wake >/dev/null 2>&1 || true
+        fi
+      fi
+    fi
+    # side effects: direct enabled switch
+    if [ "$2" = "enabled" ]; then
+      "$0" set-enabled "$3"
+    fi
+    ;;
+  is-enabled)
+    python3 -c "
+import json
+try:
+    d = json.load(open('$CFG'))
+    print('true' if d.get('enabled', True) else 'false')
+except Exception:
+    print('true')
+"
+    ;;
+  set-enabled)
+    VAL="${2:-true}"
+    python3 - "$VAL" "$CFG" <<'PY'
+import json, sys
+raw = sys.argv[1].lower()
+val = raw in ("true", "1", "on", "yes")
+f = sys.argv[2]
+try:
+    d = json.load(open(f))
+except Exception:
+    d = {}
+d["enabled"] = val
+json.dump(d, open(f, "w"), indent=2)
+PY
+    RT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    WAKE_DIR="$RT/jarvis-wake"
+    mkdir -p "$WAKE_DIR"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ "$VAL" = "false" ] || [ "$VAL" = "off" ] || [ "$VAL" = "0" ]; then
+      touch "$WAKE_DIR/disabled"
+      systemctl --user stop omarchy-assistant-wake.service >/dev/null 2>&1 || true
+      bash "$SCRIPT_DIR/jarvis-stop" --silent >/dev/null 2>&1 || true
+      omarchy-notification-send -r 424242 -t 2500 "Assistant: Disabled (Muted)" >/dev/null 2>&1 || true
+    else
+      rm -f "$WAKE_DIR/disabled"
+      WW_ON=$(python3 -c "import json;print('true' if json.load(open('$CFG')).get('wake_word',{}).get('enabled',True) else 'false')" 2>/dev/null || echo true)
+      if [ "$WW_ON" = "true" ]; then
+        systemctl --user start omarchy-assistant-wake.service >/dev/null 2>&1 || true
+      fi
+      omarchy-notification-send -r 424242 -t 2500 "Assistant: Enabled" >/dev/null 2>&1 || true
+    fi
+    ;;
+  toggle-enabled)
+    CUR=$("$0" is-enabled)
+    if [ "$CUR" = "true" ]; then
+      "$0" set-enabled false
+    else
+      "$0" set-enabled true
+    fi
     ;;
   personas)
     ls "$HOME/.config/omarchy-assistant/personas/" 2>/dev/null | sed 's/\.md$//'
@@ -76,3 +141,4 @@ PY
     echo "piper (alan)"
     ;;
 esac
+

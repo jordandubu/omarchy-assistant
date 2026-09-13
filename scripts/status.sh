@@ -82,6 +82,20 @@ if pgrep -f "pw-play /tmp/jarvis" >/dev/null 2>&1; then
   STATE="speaking"
 fi
 
+# Assistant disabled?
+CFG="$HOME/.config/omarchy-assistant/settings.json"
+DISABLED_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/jarvis-wake/disabled"
+ENABLED="true"
+if [ -f "$DISABLED_FILE" ]; then
+  ENABLED="false"
+elif [ -f "$CFG" ]; then
+  ENABLED="$(python3 -c "import json;print('true' if json.load(open('$CFG')).get('enabled',True) else 'false')" 2>/dev/null || echo true)"
+fi
+
+if [ "$ENABLED" = "false" ]; then
+  STATE="disabled"
+fi
+
 # Setup incomplete? (cached 10 s to keep the poll cheap)
 SETUP="ok"
 CACHE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omarchy-assistant-setup-cache"
@@ -96,4 +110,4 @@ else
   echo "$SETUP" > "$CACHE"
 fi
 
-printf '{"state":"%s","setup":"%s","activity":%s,"agents":%s}\n' "$STATE" "$SETUP" "$(printf '%s' "$ACTIVITY" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" "$AGENTS"
+printf '{"state":"%s","enabled":%s,"setup":"%s","activity":%s,"agents":%s}\n' "$STATE" "$ENABLED" "$SETUP" "$(printf '%s' "$ACTIVITY" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" "$AGENTS"

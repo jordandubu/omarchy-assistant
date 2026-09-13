@@ -17,6 +17,28 @@ Panel {
   readonly property string state: hostWidget ? hostWidget.state : "idle"
   readonly property string activity: hostWidget ? hostWidget.activity : ""
   readonly property var agents: hostWidget ? (hostWidget.agents || []) : []
+  property bool assistantEnabled: hostWidget ? hostWidget.assistantEnabled : true
+
+  function toggleEnabled() {
+    assistantEnabled = !assistantEnabled
+    if (hostWidget && typeof hostWidget.toggleEnabled === "function") {
+      hostWidget.toggleEnabled()
+    } else {
+      toggleEnabledProcess.running = true
+    }
+  }
+
+  Process {
+    id: toggleEnabledProcess
+    running: false
+    command: [
+      root.scriptDir + "settings.sh",
+      "toggle-enabled"
+    ]
+    onExited: {
+      root.reload()
+    }
+  }
 
   // Settings (loaded via scripts/settings.sh)
   property string brain: "omp"
@@ -41,6 +63,15 @@ Panel {
 
   // Settings table: one row per setting (label + dropdown + apply)
   readonly property var settingRows: [
+    {
+      label: "Assistant power",
+      options: ["enabled", "disabled"],
+      value: (root.assistantEnabled && root.state !== "disabled") ? "enabled" : "disabled",
+      apply: function(v) {
+        if (v === "disabled" && root.assistantEnabled) root.toggleEnabled()
+        else if (v === "enabled" && !root.assistantEnabled) root.toggleEnabled()
+      }
+    },
     {
       label: "Brain",
       options: ["omp", "agy", "opencode", "claude", "codex", "gemini", "cursor-agent", "crush"],
@@ -129,7 +160,7 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        // one line: brain|personality|stt|voice|live|lang|wake
+        // one line: brain|personality|stt|voice|live|lang|wake|enabled
         var p = String(text || "").trim().split("|")
         if (p.length >= 4) {
           root.brain = p[0]
@@ -139,6 +170,7 @@ Panel {
           if (p.length >= 5) root.liveActivity = p[4]
           if (p.length >= 6) root.language = p[5]
           if (p.length >= 7) root.wakeWordOn = p[6]
+          if (p.length >= 8) root.assistantEnabled = (p[7].trim() === "true")
         }
       }
     }
@@ -242,7 +274,7 @@ Panel {
     var sh = root.scriptDir
     settingsGetProcess.command = ["bash", "-c",
       "sh=" + sh + "/settings.sh; " +
-      "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)|$(\"$sh\" get live_activity)|$(\"$sh\" get language)|$(\"$sh\" get wake_word.enabled)\""]
+      "echo \"$(\"$sh\" get brain)|$(\"$sh\" get personality)|$(\"$sh\" get stt_engine)|$(\"$sh\" get tts.voice)|$(\"$sh\" get live_activity)|$(\"$sh\" get language)|$(\"$sh\" get wake_word.enabled)|$(\"$sh\" is-enabled)\""]
     personasProcess.command = ["bash", "-c", sh + "/settings.sh personas"]
     voicesProcess.command = ["bash", "-c", sh + "/settings.sh voices"]
     setupCheckProcess.command = ["bash", "-c",
@@ -275,11 +307,13 @@ Panel {
         width: parent.width
         spacing: Style.space(10)
 
-        // ---------- Hero: assistant name + state ----------
+        // ---------- Hero: assistant name + state + power switch ----------
         PanelHero {
+          id: hero
           width: parent.width
           title: root.needsSetup ? "Assistant — Setup" : "Assistant"
           meta: {
+            if (!root.assistantEnabled || root.state === "disabled") return "disabled"
             if (root.needsSetup && root.setupState === "running") return "setting up…"
             if (root.needsSetup) return "setup required"
             if (root.state === "thinking") return "working…"
@@ -287,14 +321,79 @@ Panel {
             if (root.state === "speaking") return "speaking"
             return "ready"
           }
-          foreground: (root.needsSetup || root.state === "listening") ? root.urgent : Color.popups.text
+          foreground: (!root.assistantEnabled || root.state === "disabled") ? root.dim : (root.needsSetup || root.state === "listening") ? root.urgent : Color.popups.text
           iconComponent: Component {
             AssistantMark {
               width: Style.font.display
               height: Style.font.display
-              state: root.state
+              state: (!root.assistantEnabled || root.state === "disabled") ? "disabled" : root.state
               setup: root.setupState
-              color: (root.needsSetup || root.state === "listening") ? root.urgent : (root.state === "thinking" || root.state === "speaking") ? Color.accent : Color.popups.text
+              color: (!root.assistantEnabled || root.state === "disabled") ? root.dim : (root.needsSetup || root.state === "listening") ? root.urgent : (root.state === "thinking" || root.state === "speaking") ? Color.accent : Color.popups.text
+            }
+          }
+          trailingControl: Component {
+            ToggleSwitch {
+              id: powerSwitch
+              checked: root.assistantEnabled && root.state !== "disabled"
+              foreground: hero.foreground
+              onToggled: root.toggleEnabled()
+
+              PanelToolTip {
+                visible: powerSwitch.containsMouse
+                text: (root.assistantEnabled && root.state !== "disabled") ? "Click to disable assistant completely" : "Click to enable assistant"
+              }
+            }
+          }
+        }
+
+        // ---------- Disabled state banner (shown when assistant is off) ----------
+        Rectangle {
+          visible: !root.assistantEnabled || root.state === "disabled"
+          width: parent.width
+          implicitHeight: disabledCol.implicitHeight + Style.space(16)
+          color: Qt.rgba(1, 0.2, 0.2, 0.08)
+          radius: Style.cornerRadius
+          border.width: 1
+          border.color: root.urgent
+
+          Column {
+            id: disabledCol
+            anchors.fill: parent
+            anchors.margins: Style.space(8)
+            spacing: Style.space(6)
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                text: "●"
+                color: root.urgent
+                font.pixelSize: Style.font.caption
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                text: "Assistant Completely Disabled"
+                color: root.urgent
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            Text {
+              width: parent.width
+              text: "Wake-word ('Omarchy'), microphone listening, and background agent brains are completely shut off."
+              color: Color.popups.text
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Button {
+              width: parent.width
+              text: "Enable Assistant"
+              onClicked: root.toggleEnabled()
             }
           }
         }

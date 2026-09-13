@@ -49,8 +49,27 @@ BarWidget {
   property string activity: ""
   property string setup: "ok"
   property var agents: []
+  property bool assistantEnabled: true
+
+  function toggleEnabled() {
+    toggleEnabledProcess.running = true
+  }
+
+  Process {
+    id: toggleEnabledProcess
+    running: false
+    command: [
+      "bash",
+      Qt.resolvedUrl("scripts/settings.sh").toString().replace("file://", ""),
+      "toggle-enabled"
+    ]
+    onExited: {
+      statusProcess.running = true
+    }
+  }
 
   readonly property color faceColor: {
+    if (!assistantEnabled || state === "disabled") return Qt.rgba(1, 1, 1, 0.28)
     if (setup !== "ok") return Color.urgent
     if (state === "thinking") return Color.accent
     if (state === "listening") return Color.urgent
@@ -96,6 +115,7 @@ BarWidget {
           root.activity = s.activity || ""
           root.setup = s.setup || "ok"
           root.agents = s.agents || []
+          root.assistantEnabled = s.enabled !== false
         } catch (e) {}
       }
     }
@@ -105,17 +125,22 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    tooltipText: root.setup !== "ok" ? "Assistant needs setup — click to configure"
+    tooltipText: (!root.assistantEnabled || root.state === "disabled") ? "AI Assistant (Disabled / Muted — click to open, right-click to enable)"
+      : root.setup !== "ok" ? "Assistant needs setup — click to configure"
       : root.activity !== "" ? root.activity : "AI Assistant"
     iconComponent: Component {
       AssistantMark {
-        state: root.state
+        state: (!root.assistantEnabled || root.state === "disabled") ? "disabled" : root.state
         setup: root.setup
         color: root.faceColor
       }
     }
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.LeftButton) root.toggle()
+      if (buttonCode === Qt.LeftButton) {
+        root.toggle()
+      } else if (buttonCode === Qt.RightButton) {
+        root.toggleEnabled()
+      }
     }
   }
 }
