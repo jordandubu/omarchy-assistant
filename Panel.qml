@@ -277,7 +277,6 @@ Panel {
             return "ready"
           }
           foreground: (root.needsSetup || root.state === "listening") ? root.urgent : Color.popups.text
-          fontFamily: root.fontFamily
           iconComponent: Component {
             Item {
               width: Style.font.display
