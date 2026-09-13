@@ -278,15 +278,12 @@ Panel {
           }
           foreground: (root.needsSetup || root.state === "listening") ? root.urgent : Color.popups.text
           iconComponent: Component {
-            Item {
+            AssistantMark {
               width: Style.font.display
               height: Style.font.display
-
-              Text {
-                text: "◼"
-                font.family: "monospace"
-                font.pixelSize: Style.font.display
-              }
+              state: root.state
+              setup: root.setupState
+              color: (root.needsSetup || root.state === "listening") ? root.urgent : (root.state === "thinking" || root.state === "speaking") ? Color.accent : Color.popups.text
             }
           }
         }

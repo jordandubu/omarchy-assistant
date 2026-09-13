@@ -49,9 +49,6 @@ BarWidget {
   property string activity: ""
   property string setup: "ok"
 
-  // Plain cube; color carries the state
-  readonly property string face: "◼"
-
   readonly property color faceColor: {
     if (setup !== "ok") return Color.urgent
     if (state === "thinking") return Color.accent
@@ -102,14 +99,19 @@ BarWidget {
     }
   }
 
-  WidgetButton {
+  BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.face
-    fontFamily: "monospace"
     tooltipText: root.setup !== "ok" ? "Assistant needs setup — click to configure"
       : root.activity !== "" ? root.activity : "AI Assistant"
+    iconComponent: Component {
+      AssistantMark {
+        state: root.state
+        setup: root.setup
+        color: root.faceColor
+      }
+    }
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
     }
