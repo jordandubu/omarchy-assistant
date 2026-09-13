@@ -513,6 +513,7 @@ Panel {
 
         // ---------- Settings: rows on a tinted card ----------
         Column {
+          visible: !root.needsSetup
           width: parent.width
           spacing: Style.space(4)
 
